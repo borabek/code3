@@ -6,10 +6,6 @@
 import json, os, sys
 import numpy as np
 
-OUT = sys.argv[1] if len(sys.argv) > 1 else "abb_samples"
-os.makedirs(OUT, exist_ok=True)
-rng = np.random.default_rng(0)
-
 
 def grid_plate(nx, ny, w, h):
     """Triangulated open plate: (V, F). z=0 plane, size w x h mm."""
@@ -29,7 +25,7 @@ def grid_plate(nx, ny, w, h):
     return V, np.asarray(F, dtype=np.int64)
 
 
-def make_part(idx):
+def make_part(idx, rng):
     nx = int(rng.integers(24, 34))
     ny = int(rng.integers(24, 34))
     w = float(rng.uniform(80, 140))
@@ -63,12 +59,21 @@ def make_part(idx):
     return obj
 
 
-n = int(sys.argv[2]) if len(sys.argv) > 2 else 6
-for i in range(n):
-    obj = make_part(i)
-    with open(os.path.join(OUT, f"part_{i:03d}.json"), "w", encoding="utf-8") as fh:
-        json.dump(obj, fh)
-    print("wrote", obj["PartNr"], len(obj["Graphic3d"]["Points"]), "verts",
-          len(obj["Graphic3d"]["Indices"]) // 3, "faces",
-          len(obj["ConnectionPoints"]), "cps")
-print("done ->", os.path.abspath(OUT))
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    out = argv[0] if len(argv) > 0 else "abb_samples"
+    n = int(argv[1]) if len(argv) > 1 else 6
+    os.makedirs(out, exist_ok=True)
+    rng = np.random.default_rng(0)
+    for i in range(n):
+        obj = make_part(i, rng)
+        with open(os.path.join(out, f"part_{i:03d}.json"), "w", encoding="utf-8") as fh:
+            json.dump(obj, fh)
+        print("wrote", obj["PartNr"], len(obj["Graphic3d"]["Points"]), "verts",
+              len(obj["Graphic3d"]["Indices"]) // 3, "faces",
+              len(obj["ConnectionPoints"]), "cps")
+    print("done ->", os.path.abspath(out))
+
+
+if __name__ == "__main__":
+    main()
