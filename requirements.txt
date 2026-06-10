@@ -1,0 +1,32 @@
+# requirements.txt — plain-pip alternative to environment.yml
+# Usage:
+#   pip install -r requirements.txt
+#   pip install -e .          # install the project itself afterwards
+#
+# Note: if you use the conda environment (environment.yml), you do NOT
+# need to run this file separately — conda handles everything.
+
+# ── Core runtime ─────────────────────────────────────────────────────────────
+setuptools>=65.0    # required by setup.py / pip install -e .
+numpy>=1.24
+
+# ── Optional: exact volume centroid ──────────────────────────────────────────
+# scipy enables the convex-hull volume centroid (Volumenschwerpunkt, §5.3.6).
+# Without it, that centroid falls back to the plain vertex mean.
+# scipy>=1.8
+
+# ── Dev / test (optional) ─────────────────────────────────────────────────────
+# Uncomment to install:
+# pytest>=7.0
+# black
+# flake8
+
+# ── Hyperparameter optimization (optional) ────────────────────────────────────
+# Needed only for hpo_ray.py (Ray Tune). Heavy dependency — leave commented
+# unless you actually run HPO.  Or:  pip install -e ".[hpo]"
+# ray[tune]>=2.9
+
+# ── CAD conversion (optional) ─────────────────────────────────────────────────
+# Needed only for STEP -> STL in dataset_convert.py. STL -> OBJ works without it.
+# Or:  pip install -e ".[cad]"   (alternatively FreeCAD/OpenCASCADE via cadquery-ocp)
+# gmsh>=4.11

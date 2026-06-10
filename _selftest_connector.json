@@ -1,0 +1,477 @@
+{
+  "nodes": [
+    {
+      "id": 0,
+      "label": "SnapPoint",
+      "robot_class": "RailMount",
+      "position": [
+        0.32609,
+        0.05797,
+        0.0
+      ],
+      "volume_center": [
+        0.32609,
+        0.05797,
+        0.0
+      ],
+      "opening": [
+        0.32609,
+        0.05797,
+        0.0
+      ],
+      "surface": [
+        0.32609,
+        0.05797,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "size": 0.043688,
+      "n_vertices": 252,
+      "entry_point": [
+        0.32609,
+        0.05797,
+        0.0
+      ],
+      "approach_vector": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "insertion_axis": [
+        -0.0,
+        -0.0,
+        -1.0
+      ],
+      "standoff_point": [
+        0.32609,
+        0.05797,
+        5.0
+      ],
+      "approach_distance_mm": 5.0,
+      "insertion_depth_mm": 0.0,
+      "insertion_depth_axis_mm": 0.0,
+      "confidence_score": 1.0,
+      "normal_stability": 1.0,
+      "is_valid_for_robot": true,
+      "invalid_reason": null,
+      "terminal_type": null
+    },
+    {
+      "id": 1,
+      "label": "SnapPoint",
+      "robot_class": "RailMount",
+      "position": [
+        0.83333,
+        0.05797,
+        0.0
+      ],
+      "volume_center": [
+        0.83333,
+        0.05797,
+        0.0
+      ],
+      "opening": [
+        0.83333,
+        0.05797,
+        0.0
+      ],
+      "surface": [
+        0.83333,
+        0.05797,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "size": 0.018484,
+      "n_vertices": 108,
+      "entry_point": [
+        0.83333,
+        0.05797,
+        0.0
+      ],
+      "approach_vector": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "insertion_axis": [
+        -0.0,
+        -0.0,
+        -1.0
+      ],
+      "standoff_point": [
+        0.83333,
+        0.05797,
+        5.0
+      ],
+      "approach_distance_mm": 5.0,
+      "insertion_depth_mm": 0.0,
+      "insertion_depth_axis_mm": 0.0,
+      "confidence_score": 1.0,
+      "normal_stability": 1.0,
+      "is_valid_for_robot": true,
+      "invalid_reason": null,
+      "terminal_type": null
+    },
+    {
+      "id": 2,
+      "label": "CableEntry",
+      "robot_class": "CableEntry",
+      "position": [
+        0.5,
+        0.5,
+        -0.07315
+      ],
+      "volume_center": [
+        0.5,
+        0.5,
+        -0.05604
+      ],
+      "opening": [
+        0.5,
+        0.5,
+        -0.01084
+      ],
+      "surface": [
+        0.5,
+        0.5,
+        -0.17998
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        -1.0
+      ],
+      "size": 0.123587,
+      "n_vertices": 384,
+      "entry_point": [
+        0.5,
+        0.5,
+        -0.01084
+      ],
+      "approach_vector": [
+        0.0,
+        0.0,
+        -1.0
+      ],
+      "insertion_axis": [
+        -0.0,
+        -0.0,
+        1.0
+      ],
+      "standoff_point": [
+        0.5,
+        0.5,
+        -5.01084
+      ],
+      "approach_distance_mm": 5.0,
+      "insertion_depth_mm": 0.16915,
+      "insertion_depth_axis_mm": 0.20466,
+      "confidence_score": 1.0,
+      "normal_stability": 1.0,
+      "is_valid_for_robot": true,
+      "invalid_reason": null,
+      "terminal_type": "cable_gland"
+    },
+    {
+      "id": 3,
+      "label": "LabelSurface",
+      "robot_class": "IdentificationSurface",
+      "position": [
+        0.9058,
+        0.52899,
+        0.0
+      ],
+      "volume_center": [
+        0.9058,
+        0.52899,
+        0.0
+      ],
+      "opening": [
+        0.9058,
+        0.52899,
+        0.0
+      ],
+      "surface": [
+        0.9058,
+        0.52899,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "size": 0.024575,
+      "n_vertices": 140,
+      "entry_point": [
+        0.9058,
+        0.52899,
+        0.0
+      ],
+      "approach_vector": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "insertion_axis": [
+        -0.0,
+        -0.0,
+        -1.0
+      ],
+      "standoff_point": [
+        0.9058,
+        0.52899,
+        5.0
+      ],
+      "approach_distance_mm": 5.0,
+      "insertion_depth_mm": 0.0,
+      "insertion_depth_axis_mm": 0.0,
+      "confidence_score": 1.0,
+      "normal_stability": 1.0,
+      "is_valid_for_robot": true,
+      "invalid_reason": null,
+      "terminal_type": null
+    },
+    {
+      "id": 4,
+      "label": "Contact",
+      "robot_class": "TerminalContact",
+      "position": [
+        0.07971,
+        0.92029,
+        0.0
+      ],
+      "volume_center": [
+        0.07971,
+        0.92029,
+        0.0
+      ],
+      "opening": [
+        0.07971,
+        0.92029,
+        0.0
+      ],
+      "surface": [
+        0.07971,
+        0.92029,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "size": 0.025415,
+      "n_vertices": 144,
+      "entry_point": [
+        0.07971,
+        0.92029,
+        0.0
+      ],
+      "approach_vector": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "insertion_axis": [
+        -0.0,
+        -0.0,
+        -1.0
+      ],
+      "standoff_point": [
+        0.07971,
+        0.92029,
+        5.0
+      ],
+      "approach_distance_mm": 5.0,
+      "insertion_depth_mm": 0.0,
+      "insertion_depth_axis_mm": 0.0,
+      "confidence_score": 1.0,
+      "normal_stability": 1.0,
+      "is_valid_for_robot": true,
+      "invalid_reason": null,
+      "terminal_type": "push_in_terminal"
+    },
+    {
+      "id": 5,
+      "label": "Contact",
+      "robot_class": "TerminalContact",
+      "position": [
+        0.5,
+        0.92029,
+        0.0
+      ],
+      "volume_center": [
+        0.5,
+        0.92029,
+        0.0
+      ],
+      "opening": [
+        0.5,
+        0.92029,
+        0.0
+      ],
+      "surface": [
+        0.5,
+        0.92029,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "size": 0.025415,
+      "n_vertices": 144,
+      "entry_point": [
+        0.5,
+        0.92029,
+        0.0
+      ],
+      "approach_vector": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "insertion_axis": [
+        -0.0,
+        -0.0,
+        -1.0
+      ],
+      "standoff_point": [
+        0.5,
+        0.92029,
+        5.0
+      ],
+      "approach_distance_mm": 5.0,
+      "insertion_depth_mm": 0.0,
+      "insertion_depth_axis_mm": 0.0,
+      "confidence_score": 1.0,
+      "normal_stability": 1.0,
+      "is_valid_for_robot": true,
+      "invalid_reason": null,
+      "terminal_type": "push_in_terminal"
+    },
+    {
+      "id": 6,
+      "label": "Contact",
+      "robot_class": "TerminalContact",
+      "position": [
+        0.92029,
+        0.92029,
+        0.0
+      ],
+      "volume_center": [
+        0.92029,
+        0.92029,
+        0.0
+      ],
+      "opening": [
+        0.92029,
+        0.92029,
+        0.0
+      ],
+      "surface": [
+        0.92029,
+        0.92029,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "size": 0.025415,
+      "n_vertices": 144,
+      "entry_point": [
+        0.92029,
+        0.92029,
+        0.0
+      ],
+      "approach_vector": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "insertion_axis": [
+        -0.0,
+        -0.0,
+        -1.0
+      ],
+      "standoff_point": [
+        0.92029,
+        0.92029,
+        5.0
+      ],
+      "approach_distance_mm": 5.0,
+      "insertion_depth_mm": 0.0,
+      "insertion_depth_axis_mm": 0.0,
+      "confidence_score": 1.0,
+      "normal_stability": 1.0,
+      "is_valid_for_robot": true,
+      "invalid_reason": null,
+      "terminal_type": "push_in_terminal"
+    }
+  ],
+  "links": [
+    {
+      "from": 4,
+      "to": 3,
+      "type": "feature_link"
+    },
+    {
+      "from": 4,
+      "to": 5,
+      "type": "wire_candidate",
+      "distance": 0.42029
+    },
+    {
+      "from": 4,
+      "to": 6,
+      "type": "wire_candidate",
+      "distance": 0.84058
+    },
+    {
+      "from": 5,
+      "to": 3,
+      "type": "feature_link"
+    },
+    {
+      "from": 5,
+      "to": 4,
+      "type": "wire_candidate",
+      "distance": 0.42029
+    },
+    {
+      "from": 5,
+      "to": 6,
+      "type": "wire_candidate",
+      "distance": 0.42029
+    },
+    {
+      "from": 6,
+      "to": 3,
+      "type": "feature_link"
+    },
+    {
+      "from": 6,
+      "to": 5,
+      "type": "wire_candidate",
+      "distance": 0.42029
+    },
+    {
+      "from": 6,
+      "to": 4,
+      "type": "wire_candidate",
+      "distance": 0.84058
+    }
+  ]
+}
