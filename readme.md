@@ -363,6 +363,41 @@ python run_on_file.py part.off part.labels --gap-frac 0.08 --angle-max 25
 | `infer_pipeline.py` | **End-to-end inference**: mesh → DiffusionNet (+ optional YOLO snap-point) → connector graph |
 | `blender_export.py` | Headless Blender: **vertex-group → label extraction** + label-colour viz |
 | `demo_projection.py` | End-to-end demo of the 2D→3D crop feeding the connector pipeline |
+| `json_dataset.py` | **Streaming loader** for the ABB JSON corpus (big array *or* a directory of per-part files); dedups coincident CPs into terminal-block locations |
+| `cp_targets.py` | Per-vertex target **encode** (heatmap+offset+direction) / **decode** (threshold→NMS→exact point) + robot-ready JSON exporter |
+| `cp_regressor.py` | 7-channel regression head: **DiffusionNet** backbone (production) + light MLP (smoke), combined loss, training/inference |
+| `metrics_cp.py` | Keypoint metrics: localisation (mm), angular (deg), precision/recall/F1 |
+| `train_cp.py` | CLI tying loader+targets+regressor+metrics with a deterministic train/val split |
+
+## Connection-point training from JSON data (Option B)
+
+Learns connection points (entry point + insertion direction) directly from the
+ABB component JSON (`Graphic3d.Points/Indices` mesh + ground-truth
+`ConnectionPoints`), as a per-vertex regression rather than the 5-class
+segmentation. Many JSON `ConnectionPoints` are electrical *terminals* that share
+one XYZ (e.g. `L1/L2/L3/PE`), so coincident points are deduped into
+**terminal-block locations** (names kept as metadata) — that is what geometry can
+actually localise. `InsertDirection` is outward (= robot `approach_vector`;
+`insertion_axis = -InsertDirection`).
+
+```bash
+# corpus = a directory of per-part JSON files (e.g. the 429-file folder)
+# smoke-test backbone (torch only, no geometric receptive field):
+python -c "import sys; sys.path.insert(0,'.'); import train_cp; train_cp.main()" \
+    /path/to/abb_corpus --backbone mlp --epochs 300
+
+# production backbone (DiffusionNet) — cache the eigenbasis per part (the
+# expensive step at 429-file scale) so it is computed once and reused:
+python -c "import sys; sys.path.insert(0,'.'); import train_cp; train_cp.main()" \
+    /path/to/abb_corpus --backbone diffusionnet --device cuda \
+    --op-cache-dir /path/to/op_cache --epochs 200
+```
+
+The `diffusionnet` backbone needs the `diffusion_net` package (clone
+https://github.com/nmwsharp/diffusion-net and add its `src/` to `PYTHONPATH`;
+deps: `robust_laplacian`, `potpourri3d`, `scikit-learn`). The MLP backbone needs
+only `torch` and is for smoke-tests — it memorises a single part well but has no
+receptive field, so it does not generalise across parts.
 
 ### Coverage & honesty
 
