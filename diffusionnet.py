@@ -12,9 +12,160 @@
 #   §2.2.3             – NLL loss (Negative Log-Likelihood), weighted cross-entropy
 
 import logging
+from dataclasses import dataclass
 import numpy as np
 import metrics
-from hpo_ray import LOSS_WEIGHTS_BY_ID, BEST_DIFFUSIONNET
+
+# ---------------------------------------------------------------------------
+# HPO search space and best hyperparameters (merged from hpo_ray.py)
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class Param:
+    kind: str
+    low: float | None = None
+    high: float | None = None
+    choices: tuple | None = None
+
+    def sample(self, rng):
+        if self.kind == "loguniform":
+            import math
+            assert self.low is not None and self.high is not None
+            lo, hi = math.log(self.low), math.log(self.high)
+            return math.exp(rng.uniform(lo, hi))
+        if self.kind == "uniform":
+            assert self.low is not None and self.high is not None
+            return rng.uniform(self.low, self.high)
+        if self.kind == "randint":
+            assert self.low is not None and self.high is not None
+            return rng.randint(int(self.low), int(self.high) - 1)
+        if self.kind == "choice":
+            assert self.choices is not None
+            return rng.choice(list(self.choices))
+        raise ValueError(f"unknown param kind: {self.kind}")
+
+    def to_ray(self):
+        from ray import tune  # type: ignore[import]
+        if self.kind == "loguniform":
+            assert self.low is not None and self.high is not None
+            return tune.loguniform(self.low, self.high)
+        if self.kind == "uniform":
+            assert self.low is not None and self.high is not None
+            return tune.uniform(self.low, self.high)
+        if self.kind == "randint":
+            assert self.low is not None and self.high is not None
+            return tune.randint(int(self.low), int(self.high))
+        if self.kind == "choice":
+            assert self.choices is not None
+            return tune.choice(list(self.choices))
+        raise ValueError(f"unknown param kind: {self.kind}")
+
+
+DIFFUSIONNET_SPACE = {
+    "input_features":     Param("choice", choices=("xyz", "hks")),
+    "learning_rate":      Param("loguniform", 1e-5, 1e-1),
+    "lr_decay_every":     Param("choice", choices=(25, 50, 100, 250, 500)),
+    "lr_decay_rate":      Param("uniform", 0.0, 1.0),
+    "loss":               Param("choice", choices=("nll", "ce")),
+    "n_diffusion_blocks": Param("choice", choices=(1, 2, 3, 4, 5)),
+    "c_width":            Param("choice", choices=(32, 64, 128, 256, 512, 1024)),
+    "n_eig":              Param("choice", choices=(32, 64, 128, 256, 512, 1024)),
+    "dropout":            Param("uniform", 0.0, 1.0),
+    "tversky_weight":     Param("choice", choices=(0.0, 0.25, 0.5)),
+}
+
+LITERATURE_DEFAULTS = {
+    "meshcnn": {"learning_rate": 0.0002, "n_conv_filters": (64, 128, 256, 256),
+                "pool_resolutions": (600, 450, 300, 180), "batch_size": 16},
+    "yolov6":  {"learning_rate": 0.01, "img_size": 512, "batch_size": 32, "epochs": 300},
+}
+
+LOSS_WEIGHTS = {
+    "housing": 46.4605, "contact": 221.5453, "snap_point": 1156.4556,
+    "cable_entry": 546.8523, "label_surface": 514.3766,
+}
+_CLASS_ORDER = ("housing", "contact", "snap_point", "cable_entry", "label_surface")
+LOSS_WEIGHTS_BY_ID = [LOSS_WEIGHTS[k] for k in _CLASS_ORDER]
+
+BEST_DIFFUSIONNET = {
+    "input_features": "xyz", "learning_rate": 1e-3, "lr_decay_every": 100,
+    "lr_decay_rate": 0.75, "loss": "nll", "n_diffusion_blocks": 3,
+    "c_width": 64, "n_eig": 64, "dropout": 0.3, "tversky_weight": 0.0,
+}
+
+
+def to_ray_space(space):
+    return {k: p.to_ray() for k, p in space.items()}
+
+
+def default_hparams(model):
+    key = model.lower()
+    if key not in LITERATURE_DEFAULTS:
+        raise KeyError(f"no literature defaults for {model!r}")
+    return dict(LITERATURE_DEFAULTS[key])
+
+
+def build_asha_scheduler(max_epochs=100, grace_period=10, reduction_factor=3):
+    from ray.tune.schedulers import ASHAScheduler  # type: ignore[import]
+    return ASHAScheduler(max_t=max_epochs, grace_period=grace_period,
+                         reduction_factor=reduction_factor)
+
+
+def build_pbt_scheduler(perturbation_interval=5, hyperparam_mutations=None):
+    from ray.tune.schedulers import PopulationBasedTraining  # type: ignore[import]
+    return PopulationBasedTraining(time_attr="training_iteration",
+                                   perturbation_interval=perturbation_interval,
+                                   hyperparam_mutations=hyperparam_mutations or {})
+
+
+def run_hpo(trainable, space, num_samples=20, metric="val_iou", mode="max",
+            scheduler="asha", max_epochs=100, gpus_per_trial=1, cpus_per_trial=2,
+            storage_path=None, experiment_name="diffusionnet_hpo"):
+    try:
+        import ray  # type: ignore[import]
+        from ray import tune  # type: ignore[import]
+        from ray.tune import TuneConfig  # type: ignore[import]
+    except ImportError as exc:
+        raise ImportError("Ray Tune not installed. pip install 'ray[tune]'") from exc
+    sched = (build_asha_scheduler(max_epochs=max_epochs) if scheduler == "asha"
+             else build_pbt_scheduler() if scheduler == "pbt" else None)
+    trainable_with_resources = tune.with_resources(
+        trainable, resources={"cpu": cpus_per_trial, "gpu": gpus_per_trial})
+    tuner = tune.Tuner(
+        trainable_with_resources, param_space=to_ray_space(space),
+        tune_config=TuneConfig(metric=metric, mode=mode, scheduler=sched,
+                               num_samples=num_samples),
+        run_config=ray.train.RunConfig(name=experiment_name, storage_path=storage_path))
+    results = tuner.fit()
+    best = results.get_best_result(metric=metric, mode=mode)
+    logging.getLogger(__name__).info("Best result: %s=%.4f  config=%s",
+                                     metric, best.metrics.get(metric, float("nan")), best.config)
+    return best
+
+
+def local_random_search(objective, space, num_samples=20, mode="max", seed=0):
+    import random
+    rng = random.Random(seed)
+    trials = [(cfg := {k: p.sample(rng) for k, p in space.items()}, objective(cfg))
+              for _ in range(num_samples)]
+    better = max if mode == "max" else min
+    best_cfg, best_val = better(trials, key=lambda t: t[1])
+    return best_cfg, best_val, trials
+
+
+def _hpo_demo():
+    print("DiffusionNet HPO search space (Table 3):")
+    for k, p in DIFFUSIONNET_SPACE.items():
+        rng = f"[{p.low}, {p.high}]" if p.choices is None else f"choices={p.choices}"
+        print(f"   - {k:18s} {p.kind:11s} {rng}")
+    try:
+        import ray  # type: ignore[import]  # noqa: F401
+        have_ray = True
+    except ImportError:
+        have_ray = False
+    print(f"\n[backend] Ray Tune {'available' if have_ray else 'NOT installed -> local random search'}")
+
+# ---------------------------------------------------------------------------
 
 logger = logging.getLogger(__name__)
 
@@ -106,19 +257,21 @@ MAX_K_EIG = 128
 
 
 # §5.3.3 – cotangent Laplacian, mass matrix, eigenbasis (k_eig eigenvectors)
-def precompute_operators(verts, faces, k_eig):
-    """Laplace/mass matrices, eigenbasis and gradient operators (cached during
-    training, recomputed per-part at inference).
+def precompute_operators(verts, faces, k_eig, op_cache_dir=None):
+    """Laplace/mass matrices, eigenbasis and gradient operators.
 
     `k_eig` is capped at MAX_K_EIG (128) to bound eigen-decomposition cost and
-    GPU memory on large meshes.
+    GPU memory on large meshes. When `op_cache_dir` is given the eigenbasis is
+    cached/loaded by diffusion_net (keyed on the mesh) -- strongly recommended
+    so the expensive decomposition is not repeated every run.
     """
     torch = _require("torch", "pip install torch")
     dn = _require("diffusion_net", "pip install git+https://github.com/nmwsharp/diffusion-net")
     k_eig = int(min(int(k_eig), MAX_K_EIG))
     V = torch.tensor(np.asarray(verts), dtype=torch.float32)
     F = torch.tensor(np.asarray(faces), dtype=torch.long)
-    frames, mass, L, evals, evecs, gradX, gradY = dn.geometry.get_operators(V, F, k_eig=k_eig)
+    frames, mass, L, evals, evecs, gradX, gradY = dn.geometry.get_operators(
+        V, F, k_eig=k_eig, op_cache_dir=op_cache_dir)
     return {"verts": V, "faces": F, "mass": mass, "L": L, "evals": evals,
             "evecs": evecs, "gradX": gradX, "gradY": gradY}
 
@@ -190,18 +343,27 @@ def _compute_loss(out, lab, w, meta, cfg):
 # step -> the full operator cache does not live permanently in VRAM (avoids OOM
 # with many meshes / large k_eig on 11 GB).
 
-def precompute_dataset(samples, meta):
+def precompute_dataset(samples, meta, op_cache_dir=None):
     """Pre-compute operators + model input per sample on CPU.
 
-    Returns list of dicts {ops, x_in, lab} (all CPU tensors).
+    Returns list of dicts {ops, x_in, lab} (all CPU tensors). A part whose
+    operators fail to build (degenerate geometry, eigensolver error) is logged
+    and skipped rather than killing the whole run.
     """
     torch = _require("torch", "pip install torch")
-    out = []
+    out, skipped = [], 0
     for s in samples:
-        ops = precompute_operators(s["verts"], s["faces"], meta["k_eig"])
+        try:
+            ops = precompute_operators(s["verts"], s["faces"], meta["k_eig"], op_cache_dir)
+        except Exception as exc:                       # noqa: BLE001 (skip bad mesh)
+            skipped += 1
+            logger.warning("skipping part (operator build failed): %s", exc)
+            continue
         x_in = ops["verts"] if meta["input_features"] == "xyz" else _model_input(ops, meta)
         lab = torch.as_tensor(np.asarray(s["labels"]), dtype=torch.long)
         out.append({"ops": ops, "x_in": x_in, "lab": lab})
+    if skipped:
+        logger.warning("skipped %d/%d parts with bad geometry", skipped, len(samples))
     return out
 
 
@@ -214,7 +376,7 @@ def _to_device(sample, device):
 
 def train_diffusionnet(config, train_samples, val_samples, epochs=200,
                        device="cpu", weights=None, report=None, eval_every=5,
-                       checkpoint_path=None):
+                       checkpoint_path=None, op_cache_dir=None):
     """Train DiffusionNet and report validation metrics per epoch.
 
     train_samples / val_samples: lists of dicts with 'verts','faces','labels'.
@@ -249,8 +411,8 @@ def train_diffusionnet(config, train_samples, val_samples, epochs=200,
     # sample to GPU during the step, then free it.
     logger.info("DiffusionNet: precomputing operators (%d train, %d val, k_eig=%d) ...",
                 len(train_samples), len(val_samples), meta["k_eig"])
-    train = precompute_dataset(train_samples, meta)
-    val = precompute_dataset(val_samples, meta)
+    train = precompute_dataset(train_samples, meta, op_cache_dir)
+    val = precompute_dataset(val_samples, meta, op_cache_dir)
 
     best = {"mean_iou": -1.0}
     best_state = None
@@ -342,7 +504,8 @@ def load_checkpoint(path, device="cpu", n_classes=N_CLASSES):
 
 
 # §5.3.7 / Abb.45 – per-vertex segmentation: (V, 5) probability -> argmax -> 1D label tensor
-def predict(model, meta, verts, faces, device="cpu", return_probs=False):
+def predict(model, meta, verts, faces, device="cpu", return_probs=False,
+            op_cache_dir=None):
     """Per-vertex segmentation of a single part (§5.3.7 / Figure 45).
 
     Runs forward pass and reduces the (V, 5) probability distribution via
@@ -353,7 +516,7 @@ def predict(model, meta, verts, faces, device="cpu", return_probs=False):
     torch = _require("torch", "pip install torch")
     model = model.to(device)
     model.eval()
-    ops = precompute_operators(verts, faces, meta["k_eig"])
+    ops = precompute_operators(verts, faces, meta["k_eig"], op_cache_dir)
     ops = {k: (v.to(device) if hasattr(v, "to") else v) for k, v in ops.items()}
     with torch.no_grad():
         out = _forward(model, ops, _model_input(ops, meta))
@@ -391,7 +554,7 @@ def make_ray_trainable(train_samples, val_samples, epochs=200, weights=None):
     """Build a Ray-Tune trainable that feeds the search-space config into
     train_diffusionnet and reports val_iou. pass to hpo_ray.run_hpo(trainable, ...)."""
     def trainable(config):
-        from ray import tune
+        from ray import tune  # type: ignore[import]
         train_diffusionnet(
             config, train_samples, val_samples, epochs=epochs, weights=weights,
             report=lambda rep: tune.report({"val_iou": rep["mean_iou"],

@@ -65,6 +65,19 @@ def part_from_dict(obj):
     F = np.asarray(idx, dtype=np.int64).reshape(-1, 3)
     if len(V) and F.size and F.max() >= len(V):
         raise ValueError(f"face index {F.max()} >= n_vertices {len(V)}")
+    # geometry hygiene for the downstream Laplacian/eigensolver: non-finite
+    # coords (NaN/Inf from broken CAD exports) blow up get_operators, and
+    # topologically degenerate triangles (a repeated vertex index) yield
+    # zero-area faces that make the cotangent weights singular. Reject the
+    # former (whole part unusable) and silently drop the latter.
+    if len(V) and not np.isfinite(V).all():
+        raise ValueError("non-finite vertex coordinates")
+    if F.size:
+        nondegen = (F[:, 0] != F[:, 1]) & (F[:, 1] != F[:, 2]) & (F[:, 0] != F[:, 2])
+        if not nondegen.all():
+            logger.warning("dropping %d degenerate face(s) in part %s",
+                           int((~nondegen).sum()), obj.get("PartNr", "unknown"))
+            F = F[nondegen]
 
     cps = obj.get("ConnectionPoints") or []
     if cps:
@@ -171,7 +184,7 @@ def iter_parts_from_array_file(path):
 
     Uses ijson so the 1 GB file is never fully materialised in memory.
     """
-    import ijson
+    import ijson  # type: ignore[import]
     with open(path, "rb") as fh:
         for obj in ijson.items(fh, "item"):
             try:
@@ -233,7 +246,7 @@ def part_ids(source, pattern="*.json"):
 
     top = _detect_top_level(source)
     if top == "[":
-        import ijson
+        import ijson  # type: ignore[import]
         with open(source, "rb") as fh:
             for nr in ijson.items(fh, "item.PartNr"):
                 ids.append(str(nr))

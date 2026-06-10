@@ -10,10 +10,36 @@
 setuptools>=65.0    # required by setup.py / pip install -e .
 numpy>=1.24
 
-# ── Optional: exact volume centroid ──────────────────────────────────────────
-# scipy enables the convex-hull volume centroid (Volumenschwerpunkt, §5.3.6).
-# Without it, that centroid falls back to the plain vertex mean.
-# scipy>=1.8
+# ── Connection-point training pipeline (Option B: json_dataset / cp_* / train_cp)
+# scipy   : convex-hull volume centroid (§5.3.6) AND the knngraph backbone's
+#           cKDTree neighbour graph + connection-point dedup.
+# ijson   : stream the ~1 GB ABB JSON corpus without loading it all into RAM.
+# torch   : required by every learned backbone (mlp / diffusionnet / knngraph).
+scipy>=1.8
+ijson>=3.0
+# torch>=2.0          # uncomment to train/infer. CPU build on Windows:
+#                     #   pip install torch --index-url https://download.pytorch.org/whl/cpu
+#                     # GPU (CUDA 12.x): use the matching cuXXX index, e.g. .../whl/cu128
+#                     # Behind a TLS-inspecting proxy add:
+#                     #   --trusted-host download.pytorch.org --trusted-host download-r2.pytorch.org
+#                     # (CUDA wheels also pull cuda-toolkit from pypi.nvidia.com ->
+#                     #  --trusted-host pypi.nvidia.com)
+
+# ── DiffusionNet backbone (production) — LINUX / WSL ONLY ─────────────────────
+# robust_laplacian + potpourri3d ship native wheels that SEGFAULT on import on
+# Windows; use WSL/Ubuntu (see setup_wsl.sh). diffusion_net has no setup.py — clone
+# it and add its src/ to PYTHONPATH (a .pth file) rather than `pip install git+...`.
+#   pip install robust_laplacian potpourri3d scikit-learn
+#   git clone https://github.com/nmwsharp/diffusion-net  # add src/ to PYTHONPATH
+# robust_laplacian
+# potpourri3d
+# scikit-learn
+# diffusion_net (from source; not on PyPI)
+
+# ── knngraph backbone — runs on NATIVE WINDOWS (no native geometry deps) ──────
+# Needs ONLY torch + scipy + numpy (all above). No robust_laplacian/potpourri3d/
+# diffusion_net. Use this for a Windows-only deployment:
+#   python train_cp.py <corpus> --backbone knngraph --device cpu --ckpt model.pt
 
 # ── Dev / test (optional) ─────────────────────────────────────────────────────
 # Uncomment to install:

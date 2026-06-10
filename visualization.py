@@ -1,3 +1,5 @@
+# render mesh views and export scene OBJ
+
 """
 3D visualization and rendering: .obj scene export + 6-view orthographic renderer.
 
@@ -17,10 +19,7 @@ from projection_2d3d import VIEWS, VIEW_ORDER, project_points, world_aabb
 
 logger = logging.getLogger(__name__)
 
-
-# =============================================================================
 # SCENE EXPORT (.OBJ)
-# =============================================================================
 
 def export_scene_obj(path, instances, vertices=None, faces=None, arrow=None,
                      insertion_len=None):
@@ -140,10 +139,7 @@ def export_scene_obj(path, instances, vertices=None, faces=None, arrow=None,
 
     return path
 
-
-# =============================================================================
 # 6-VIEW RENDERING
-# =============================================================================
 
 def _face_normals(V, F):
     """Compute per-face normals."""
@@ -153,9 +149,6 @@ def _face_normals(V, F):
     ln[ln == 0] = 1.0
     return n / ln
 
-
-# §5.3.4 / Abb.41,42 – render one grayscale 512x512 orthographic view (YOLOv6 input)
-# §2.4 / Abb.28 – view convention: z+=top, z-=bottom, y+=front, y-=rear, x+=right, x-=left
 def render_view(view, vertices, faces, bounds, res=512,
                 background=255, ambient=0.25):
     """Render single orthographic view as grayscale image.
@@ -235,8 +228,6 @@ def render_view(view, vertices, faces, bounds, res=512,
 
     return img.astype(np.uint8)
 
-
-# §2.4 / Abb.28 – render all 6 orthographic views (top/bottom/front/rear/left/right)
 def render_all_views(vertices, faces, bounds=None, res=512, pad_frac=0.05):
     """Render all 6 orthographic views.
 
@@ -255,10 +246,7 @@ def render_all_views(vertices, faces, bounds=None, res=512, pad_frac=0.05):
     return {name: render_view(name, vertices, faces, bounds, res=res)
             for name in VIEW_ORDER}
 
-
-# =============================================================================
 # IMAGE SAVING
-# =============================================================================
 
 def save_image(path, img):
     """Save image as PNG/JPG or portable PGM (no deps).
@@ -286,7 +274,6 @@ def save_image(path, img):
         fh.write(img.tobytes())
     return path
 
-
 def save_views(out_dir, views, stem="component", res=512):
     """Save 6 rendered views to disk.
 
@@ -308,10 +295,7 @@ def save_views(out_dir, views, stem="component", res=512):
         paths[name] = save_image(os.path.join(out_dir, f"{stem}_{nice}.png"), img)
     return paths
 
-
-# =============================================================================
 # SELF-TEST
-# =============================================================================
 
 def _demo():
     """Test rendering on funnel-shaped mesh."""
@@ -341,7 +325,6 @@ def _demo():
     top = views["z+"]
     assert (top != 255).sum() > 0, "top view is empty"
     print("[ok] 6-view renderer: proper rasterization with z-buffer + shading")
-
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")

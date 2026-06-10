@@ -1,10 +1,4 @@
-# feature_geometry.py: PCA normal alignment, convex hull centroid, boundary peeling
-#
-# Reference: Scheffler (2022), §5.3.6
-#   §5.3.6 / Abb.44 – convex-hull volume centroid (v_v)
-#   §5.3.6 / Abb.44 – surface centroid via boundary peeling (v_s),
-#                      opening midpoint (v_o)
-#   §5.3.6 / Abb.44 – normal vector = v_o − v_s, aligned to bbox axes
+# geometry helpers: centroids, normals, convex hull
 
 import logging
 import numpy as np
@@ -13,14 +7,11 @@ from connector_constants import MIN_VOLUME_THRESHOLD, VERTEX_NORMAL_EPSILON
 
 logger = logging.getLogger(__name__)
 
-
 def _principal_axes(points):
     c = points.mean(0)
     _, vecs = np.linalg.eigh((points - c).T @ (points - c) / max(len(points), 1))
     return vecs.T
 
-
-# §5.3.6 / Abb.44 – normal vector aligned to principal (bbox) axes
 def align_to_bbox(points, rough):
     axes = _principal_axes(points)
     k = int(np.argmax(np.abs(axes @ rough)))
@@ -28,7 +19,6 @@ def align_to_bbox(points, rough):
     if (axes[k] @ rough) < 0:
         n = -n
     return n
-
 
 def normal_stability_score(points, rough):
     """Reliability of the bbox-aligned normal, in [0, 1].
@@ -47,7 +37,6 @@ def normal_stability_score(points, rough):
     # dominance of the strongest axis over the runner-up
     return float(np.clip(proj[0] - proj[1], 0.0, 1.0))
 
-
 # A robot approaching from the wrong side of the normal would collide with the
 # housing, so the approach vector must point away from the component body.
 def orient_outward(normal, feature_center, body_center):
@@ -58,12 +47,10 @@ def orient_outward(normal, feature_center, body_center):
         n = -n
     return n
 
-
 def insertion_depth(v_o, v_s):
     """Insertion depth = distance between the opening midpoint v_o and the
     surface centroid v_s (Scheffler §5.3.6 / Abb.44)."""
     return float(np.linalg.norm(np.asarray(v_o, dtype=float) - np.asarray(v_s, dtype=float)))
-
 
 def insertion_depth_along_axis(points, insertion_axis):
     """Physical insertion depth: the extent of the feature's vertices measured
@@ -82,7 +69,6 @@ def insertion_depth_along_axis(points, insertion_axis):
         return 0.0
     proj = P @ (a / na)
     return float(proj.max() - proj.min())
-
 
 def validate_feature_geometry(points, max_skew_deg=75.0):
     """Check whether a feature's geometry is suitable for robotic interaction.
@@ -109,8 +95,6 @@ def validate_feature_geometry(points, max_skew_deg=75.0):
     return is_valid, {"aspect_ratio": aspect_ratio, "extents": extents,
                       "skew_deg": skew_deg}
 
-
-# §5.3.6 / Abb.44 – convex-hull volume centroid (v_v): centroid weighted by tetrahedron volumes
 def convex_hull_volume_centroid(points):
     P = np.asarray(points, dtype=float).reshape(-1, 3)
     if len(P) < 4:
@@ -133,7 +117,6 @@ def convex_hull_volume_centroid(points):
         return P.mean(0)
     return centroid / w
 
-
 def _boundary_vertices(tris):
     cnt = Counter()
     for a, b, c in tris:
@@ -141,8 +124,6 @@ def _boundary_vertices(tris):
             cnt[tuple(sorted(e))] += 1
     return {u for (u, v), c in cnt.items() if c == 1} | {v for (u, v), c in cnt.items() if c == 1}
 
-
-# §5.3.6 / Abb.44 – boundary peeling to compute surface centroid (v_s) and outer ring (v_o)
 def _peel_to_centroid(V, sub):
     active = set(np.unique(sub).tolist())
     outer_ring = None
@@ -162,8 +143,6 @@ def _peel_to_centroid(V, sub):
         active = inner
     return V[list(active)].mean(0), outer_ring
 
-
-# §5.3.6 / Abb.44 – compute v_o, v_s, and bbox-aligned normal for one feature instance.
 # Returns (v_o, v_s, normal, depth_mm, depth_axis_mm, stability):
 #   depth_mm      – thesis insertion depth |v_o - v_s| (§5.3.6),
 #   depth_axis_mm – physical travel span of the feature along the insertion axis,

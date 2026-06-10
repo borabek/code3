@@ -1,9 +1,4 @@
-# run_on_file.py: connector pipeline on a mesh file
-#
-# Reference: Scheffler (2022), §5.3.5, §5.3.6, §5.3.7
-#   §5.3.5 / Abb.43  – instance segmentation by graph connectivity (invoked here)
-#   §5.3.6 / Abb.44  – centroid / normal computation (invoked here)
-#   §5.3.7           – CLI entry point for the full inference pipeline
+# run the full pipeline on a single mesh file
 
 import os, sys, logging, argparse
 import numpy as np
@@ -18,7 +13,6 @@ from connector3d import (
 HERE = os.path.dirname(os.path.abspath(__file__))
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-8s  %(message)s", datefmt="%H:%M:%S")
 logger = logging.getLogger(__name__)
-
 
 def _parser():
     p = argparse.ArgumentParser(description="Connector-3D: mesh+labels -> connector graph JSON",
@@ -37,7 +31,6 @@ def _parser():
     p.add_argument("-v", "--verbose", action="store_true")
     return p
 
-
 def _make_testpart(res=70, size=1.0, cavity_r=0.16, depth=0.22):
     xs = np.linspace(0, size, res); cx = cy = size/2
     V = np.array([(x, y, (-depth*(1-np.hypot(x-cx,y-cy)/cavity_r) if np.hypot(x-cx,y-cy)<cavity_r else 0.)) for y in xs for x in xs], dtype=float)
@@ -50,7 +43,6 @@ def _make_testpart(res=70, size=1.0, cavity_r=0.16, depth=0.22):
     L[(y<.12)&(x>.74)&(x<.92)] = 2; L[(x<.16)&(y>.84)] = 1; L[(x>.42)&(x<.58)&(y>.84)] = 1
     L[(x>.84)&(y>.84)] = 1; L[(x>.80)&(y>.46)&(y<.60)] = 4
     return V, F, L
-
 
 def _run_single(mesh_path, label_path, out_json, cfg):
     logger.info("Loading: %s", mesh_path)
@@ -92,7 +84,6 @@ def _run_single(mesh_path, label_path, out_json, cfg):
             logger.warning("Scene failed: %s", exc)
     return True
 
-
 def _run_batch(list_path, cfg):
     if not os.path.isfile(list_path):
         logger.error("Batch list not found: %s", list_path); sys.exit(1)
@@ -112,7 +103,6 @@ def _run_batch(list_path, cfg):
     logger.info("Batch done: %d ok, %d errors", ok, err)
     if err: sys.exit(1)
 
-
 def _selftest(cfg):
     # synthetic ~1-unit test part -> disable mm-scale robot thresholds so points
     # validate (see ConnectionPointDetectorConfig.for_demo).
@@ -125,7 +115,6 @@ def _selftest(cfg):
     logger.info("Selftest: synthetic mesh (%d v, %d f)", len(V), len(F))
     _run_single(os.path.join(HERE, "_selftest.off"), os.path.join(HERE, "_selftest.labels"),
                 os.path.join(HERE, "_selftest_connector.json"), cfg)
-
 
 def main():
     args = _parser().parse_args()
@@ -142,7 +131,6 @@ def main():
         out = args.out or os.path.splitext(args.mesh)[0] + "_connector.json"
         if not _run_single(args.mesh, args.labels, out, cfg): sys.exit(1)
     else: _selftest(cfg)
-
 
 if __name__ == "__main__":
     main()

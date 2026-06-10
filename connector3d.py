@@ -12,6 +12,7 @@
 
 import logging
 from typing import List
+from dataclasses import dataclass, field
 import numpy as np
 from feature_geometry import (
     feature_direction, convex_hull_volume_centroid, orient_outward,
@@ -62,6 +63,102 @@ class UnionFind:
         self.size[ra] += self.size[rb]
 
 
+# ---------------------------------------------------------------------------
+# Instance segmentation helpers (merged from instances.py)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class SegmentedRegion:
+    """A connected, single-class region of the mesh (one instance of a feature class)."""
+    label: int
+    vertex_index: np.ndarray
+    center: np.ndarray = field(default=None)
+
+
+Instance = SegmentedRegion  # backward-compatible alias
+
+
+def _inst_adj(faces, n):
+    nb = [set() for _ in range(n)]
+    for a, b, c in np.asarray(faces, dtype=int):
+        nb[a].update((b, c)); nb[b].update((a, c)); nb[c].update((a, b))
+    return nb
+
+
+def remove_boundary_layer(faces, labels, bg=HOUSING, iterations=1):
+    """Reclassify boundary vertices as background (boundary peeling, §5.3.5)."""
+    L = np.asarray(labels, dtype=int).copy()
+    nb = _inst_adj(faces, len(L))
+    for _ in range(max(1, int(iterations))):
+        out = L.copy(); changed = False
+        for i in range(len(L)):
+            if L[i] != bg and any(L[j] != L[i] for j in nb[i]):
+                out[i] = bg; changed = True
+        L = out
+        if not changed:
+            break
+    return L
+
+
+def connected_components(faces, labels, bg=HOUSING):
+    """Find connected components of each label via union-find (§5.3.5)."""
+    L = np.asarray(labels, dtype=int)
+    uf = UnionFind(len(L))
+    for a, b, c in np.asarray(faces, dtype=int):
+        for u, v in ((a, b), (b, c), (a, c)):
+            if L[u] == L[v] != bg:
+                uf.union(u, v)
+    groups = {}
+    for i in range(len(L)):
+        if L[i] != bg:
+            groups.setdefault(uf.find(i), []).append(i)
+    return [Instance(int(L[idx[0]]), np.array(idx, dtype=int)) for idx in groups.values()]
+
+
+def instances_by_connectivity(vertices, faces, labels, bg=HOUSING,
+                              min_vertices=20, peel=True, peel_iterations=1):
+    """Extract instances via boundary peeling + connectivity + size filtering."""
+    V = np.asarray(vertices, dtype=float)
+    work = (remove_boundary_layer(faces, labels, bg, iterations=peel_iterations)
+            if peel else np.asarray(labels, dtype=int))
+    comps = connected_components(faces, work, bg)
+    kept = [c for c in comps if len(c.vertex_index) >= min_vertices]
+    for inst in kept:
+        inst.center = V[inst.vertex_index].mean(axis=0)
+    return kept
+
+
+def _kmeans(P, k, iters=50, seed=0):
+    P = np.asarray(P, dtype=float)
+    if k <= 1 or len(P) <= k:
+        return np.zeros(len(P), dtype=int), P.mean(0, keepdims=True) if len(P) else P
+    rng = np.random.default_rng(seed)
+    C = [P[rng.integers(len(P))]]
+    for _ in range(1, k):
+        d2 = np.min([((P - c)**2).sum(1) for c in C], 0)
+        C.append(P[rng.choice(len(P), p=d2/d2.sum() if d2.sum() > 0 else None)])
+    C = np.array(C); lab = np.zeros(len(P), dtype=int)
+    for _ in range(iters):
+        new = ((P[:, None] - C[None])**2).sum(2).argmin(1)
+        if np.array_equal(new, lab): break
+        lab = new
+        for j in range(k):
+            if (lab == j).any(): C[j] = P[lab == j].mean(0)
+    return lab, C
+
+
+def instances_by_kmeans(vertices, labels, target_class, k):
+    """Partition vertices of a class into k instances via k-Means."""
+    V, L = np.asarray(vertices, dtype=float), np.asarray(labels, dtype=int)
+    idx = np.where(L == target_class)[0]
+    if not len(idx) or k < 1:
+        return []
+    km, _ = _kmeans(V[idx], k)
+    return [Instance(int(target_class), idx[km == j], V[idx[km == j]].mean(0))
+            for j in range(int(km.max()) + 1) if (km == j).any()]
+
+
+# ---------------------------------------------------------------------------
 # area-weighted vertex normal: each triangle contributes proportional to its area
 # so small boundary triangles don't skew the result
 def vertex_normals(vertices: np.ndarray, faces: np.ndarray) -> np.ndarray:
@@ -538,7 +635,6 @@ def run(vertices, faces, labels, min_vertices=20, gap_frac=0.05, angle_max_deg=3
     if peel_iterations is None:
         peel_iterations = getattr(cfg, "boundary_peel_iterations", 0) if cfg is not None else 0
     if peel_iterations and peel_iterations > 0:
-        from instances import remove_boundary_layer
         labels = remove_boundary_layer(faces, labels, bg=HOUSING, iterations=peel_iterations)
         logger.debug("run: peeled %d boundary layer(s)", peel_iterations)
 

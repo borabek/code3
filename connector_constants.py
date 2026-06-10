@@ -20,6 +20,7 @@ Reference: Scheffler (2022), §5.2.1
 """
 
 from enum import IntEnum
+from typing import Dict
 
 
 # §5.2.1 – 5 semantic classes: Housing(0), Contact(1), SnapPoint(2), CableEntry(3), LabelSurface(4)
@@ -56,7 +57,7 @@ RAIL_MOUNT = FeatureClass.RAIL_MOUNT
 IDENTIFICATION_SURFACE = FeatureClass.IDENTIFICATION_SURFACE
 
 # Canonical serialization names (kept stable for tooling and the JSON schema).
-LABEL_NAMES = {
+LABEL_NAMES: Dict[int, str] = {
     HOUSING:       "Housing",
     CONTACT:       "Contact",
     SNAP_POINT:    "SnapPoint",
@@ -65,7 +66,7 @@ LABEL_NAMES = {
 }
 
 # Robotic display names, keyed by the same IDs.
-ROBOTIC_LABEL_NAMES = {
+ROBOTIC_LABEL_NAMES: Dict[int, str] = {
     HOUSING:       "Housing",
     CONTACT:       "TerminalContact",
     SNAP_POINT:    "RailMount",

@@ -1,10 +1,4 @@
-# E2E inference (§5.3.7): mesh -> DN(+YOLO-SnapPoint) -> connector graph
-#
-# Reference: Scheffler (2022), §5.3.7, §6.2.3
-#   §5.3.7 / Abb.45,46 – full inference pipeline: STEP->mesh->DiffusionNet+YOLOv6
-#                         ->instance->graph
-#   §6.2.3              – hybrid inference: DiffusionNet for all classes except
-#                         SnapPoint; YOLOv6 for SnapPoint only
+# end-to-end inference pipeline: mesh -> connector graph
 
 import os, sys, json, logging, argparse, tempfile
 import numpy as np
@@ -19,7 +13,6 @@ from projection_2d3d import project_points, Detection, world_aabb
 
 logger = logging.getLogger(__name__)
 
-
 def _free_gpu_memory():
     """Release cached GPU memory between heavy stages (no-op on CPU)."""
     try:
@@ -27,7 +20,6 @@ def _free_gpu_memory():
         free_gpu_memory()
     except Exception:
         pass
-
 
 def _instance_confidence(inst, probs):
     """Mean DiffusionNet probability of the instance's own class over its vertices."""
@@ -39,7 +31,6 @@ def _instance_confidence(inst, probs):
         return 1.0
     return float(np.clip(probs[idx, label].mean(), 0.0, 1.0))
 
-
 def _resolve_mesh(mesh_path, workdir=None):
     ext = os.path.splitext(mesh_path)[1].lower()
     if ext in {".step", ".stp"}:
@@ -50,7 +41,6 @@ def _resolve_mesh(mesh_path, workdir=None):
         return load_mesh(obj)
     return load_mesh(mesh_path)
 
-
 def diffusionnet_segmenter(checkpoint, device="cpu", with_probs=True):
     from diffusionnet import load_checkpoint, predict
     model, meta, cfg = load_checkpoint(checkpoint, device=device)
@@ -60,8 +50,6 @@ def diffusionnet_segmenter(checkpoint, device="cpu", with_probs=True):
         return lambda V, F: predict(model, meta, V, F, device=device, return_probs=True)
     return lambda V, F: predict(model, meta, V, F, device=device)
 
-
-# §6.2.3 – YOLOv6 owns the SnapPoint/RailMount class: each detected box becomes
 # one RailMount connection point, with its confidence taken from the detector.
 def _crops_to_instances(crops, V, F, vn, subdiv=0, body_center=None, cfg=None):
     out = []
@@ -81,8 +69,6 @@ def _crops_to_instances(crops, V, F, vn, subdiv=0, body_center=None, cfg=None):
         out.append(inst)
     return out
 
-
-# §6.2.3 – hybrid inference: DiffusionNet for all classes except SnapPoint,
 #            YOLO for SnapPoint only (each YOLO box -> one SnapPoint instance)
 def run_inference_hybrid(mesh_path, segmenter, detections=None, cfg=None,
                          target_vertices=None, out_json=None, write_scene=True,
@@ -125,7 +111,7 @@ def run_inference_hybrid(mesh_path, segmenter, detections=None, cfg=None,
         crops = yolo_to_crops(V, F, dets, bnd, res=view_res, conf_thresh=conf_thresh,
                               snap_point_only=True,
                               min_depth_extent=getattr(cfg, "min_depth_extent_mm", 0.0))
-        # §6.2.3 – YOLOv6 is authoritative for SnapPoint/RailMount; drop DN's.
+
         labels = labels.copy(); labels[labels == SNAP_POINT] = HOUSING
         logger.info("YOLO: %d crops", len(crops))
 
@@ -166,7 +152,6 @@ def run_inference_hybrid(mesh_path, segmenter, detections=None, cfg=None,
                 logger.warning("scene failed: %s", exc)
     return {"graph": graph, "instances": inst, "labels": labels, "vertices": V, "faces": F, "crops": crops}
 
-
 def run_inference(mesh_path, segmenter, cfg=None, target_vertices=None,
                   out_json=None, write_scene=True, workdir=None):
     return run_inference_hybrid(
@@ -174,10 +159,8 @@ def run_inference(mesh_path, segmenter, cfg=None, target_vertices=None,
         target_vertices=target_vertices, out_json=out_json,
         write_scene=write_scene, workdir=workdir)
 
-
-# ---------------------------------------------------------------------------
 # Main entry point for the wiring robot: WiringRobot.ConnectionPointDetector
-# ---------------------------------------------------------------------------
+
 class ConnectionPointDetector:
     """High-level detector that turns a connector mesh into robot-ready
     connection points (§5.3.7 / §6.2.3).
@@ -214,10 +197,8 @@ class ConnectionPointDetector:
     # callable sugar: det(mesh) == det.detect(mesh)
     __call__ = detect
 
-
 # Short alias matching the TODO ("main Detector class").
 Detector = ConnectionPointDetector
-
 
 def _build_parser():
     p = argparse.ArgumentParser(
@@ -248,7 +229,6 @@ examples:
     p.add_argument("-v", "--verbose", action="store_true")
     return p
 
-
 def main():
     args = _build_parser().parse_args()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
@@ -277,7 +257,6 @@ def main():
                          target_vertices=args.scale, out_json=out,
                          write_scene=not args.no_scene, view_res=args.view_res,
                          conf_thresh=args.conf_thresh, render_dir=args.render_views)
-
 
 def _selftest(cfg):
     # The selftest part is a synthetic ~1-unit mesh; disable the mm-scale robot
@@ -350,12 +329,10 @@ def _selftest(cfg):
         assert len(insts) >= 1, f"no instances survived at {frac:.0%} label noise"
     print("[OK] robustness verified (graceful degradation under label noise).")
 
-
 def _cl(g):
     o = {}
     for n in g["nodes"]: o[n["label"]] = o.get(n["label"], 0) + 1
     return o
-
 
 if __name__ == "__main__":
     main()

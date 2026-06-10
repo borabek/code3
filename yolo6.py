@@ -18,6 +18,8 @@
 #   §6.2.3              – hybrid inference: YOLOv6 for SnapPoint only
 
 import os
+import json
+import glob
 import logging
 
 import numpy as np
@@ -27,7 +29,101 @@ from projection_2d3d import (
     world_aabb, load_detections, detections_to_crops, crop_labels,
     YOLO_PIPELINE_CLASSES,
 )
-from coco_labels import YOLO2D_TO_CONNECTOR
+
+# ---------------------------------------------------------------------------
+# COCO / YOLO label utilities (merged from coco_labels.py)
+# ---------------------------------------------------------------------------
+
+# §5.2.2 / Code 4 – YOLO/COCO bounding-box class ids (2D convention)
+DEFAULT_CATEGORIES = {0: "CableEntry", 1: "Contact", 2: "LabelSurface", 3: "SnapPoint"}
+ROBOTIC_CATEGORIES = {0: "CableEntry", 1: "TerminalContact", 2: "IdentificationSurface", 3: "RailMount"}
+
+# 2D (Code 4) -> 3D (connector) class id mapping. Single source of truth.
+YOLO2D_TO_CONNECTOR = {0: 3, 1: 1, 2: 4, 3: 2}
+CONNECTOR_TO_YOLO2D = {v: k for k, v in YOLO2D_TO_CONNECTOR.items()}
+
+
+def remap_class(cls, class_map):
+    """Translate a class id via class_map; unknown ids pass through unchanged."""
+    return class_map.get(cls, cls) if class_map is not None else cls
+
+
+def yolo_to_coco_bbox(xc, yc, w, h, img_w, img_h):
+    """Convert a normalized YOLO box (center+size) to a COCO pixel box [x,y,w,h]."""
+    bw = w * img_w; bh = h * img_h
+    x_min = max(0.0, min((xc * img_w) - bw / 2.0, img_w))
+    y_min = max(0.0, min((yc * img_h) - bh / 2.0, img_h))
+    bw = max(0.0, min(bw, img_w - x_min))
+    bh = max(0.0, min(bh, img_h - y_min))
+    return [round(x_min, 3), round(y_min, 3), round(bw, 3), round(bh, 3)]
+
+
+def parse_yolo_lines(text):
+    """Parse YOLO text lines "cls xc yc w h [conf]" -> list of (cls, xc, yc, w, h)."""
+    out = []
+    for ln in text.splitlines():
+        s = ln.strip()
+        if not s or s.startswith("#"):
+            continue
+        p = s.split()
+        if len(p) < 5:
+            continue
+        out.append((int(float(p[0])), float(p[1]), float(p[2]), float(p[3]), float(p[4])))
+    return out
+
+
+def load_yolo_file(path):
+    """Load a YOLO pseudo-label file (Code 4)."""
+    with open(path, encoding="utf-8") as fh:
+        return parse_yolo_lines(fh.read())
+
+
+def build_coco(images, categories=None, img_size=512):
+    """Build a COCO JSON dict from multiple labeled images."""
+    categories = categories or DEFAULT_CATEGORIES
+    coco_images, coco_annotations, used_cats = [], [], set()
+    ann_id = 1
+    for img_id, img in enumerate(images, start=1):
+        W = int(img.get("width", img_size)); H = int(img.get("height", img_size))
+        coco_images.append({"id": img_id, "file_name": img["file_name"], "width": W, "height": H})
+        for (cls, xc, yc, w, h) in img.get("boxes", []):
+            bbox = yolo_to_coco_bbox(xc, yc, w, h, W, H)
+            used_cats.add(cls)
+            coco_annotations.append({"id": ann_id, "image_id": img_id, "category_id": cls,
+                                      "bbox": bbox, "area": round(bbox[2] * bbox[3], 3), "iscrowd": 0})
+            ann_id += 1
+    coco_cats = [{"id": cid, "name": categories.get(cid, f"class_{cid}")} for cid in sorted(used_cats)]
+    return {"images": coco_images, "annotations": coco_annotations, "categories": coco_cats}
+
+
+def yolo_dir_to_coco(label_dir, image_ext=".png", img_size=512, categories=None, image_dir=None):
+    """Combine all YOLO .txt files in a directory into one COCO document."""
+    images = []
+    for txt in sorted(glob.glob(os.path.join(label_dir, "*.txt"))):
+        stem = os.path.splitext(os.path.basename(txt))[0]
+        boxes = load_yolo_file(txt)
+        W = H = img_size
+        if image_dir:
+            wh = _image_size(os.path.join(image_dir, stem + image_ext))
+            if wh:
+                W, H = wh
+        images.append({"file_name": stem + image_ext, "boxes": boxes, "width": W, "height": H})
+    return build_coco(images, categories=categories, img_size=img_size)
+
+
+def _image_size(path):
+    try:
+        from PIL import Image  # type: ignore[import]
+        with Image.open(path) as im:
+            return im.size
+    except Exception:
+        return None
+
+
+def save_coco(coco, path):
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(coco, fh, indent=2, ensure_ascii=False)
+    return path
 
 logger = logging.getLogger(__name__)
 

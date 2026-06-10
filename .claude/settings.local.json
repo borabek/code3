@@ -1,0 +1,40 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(@\\(\"augment.py\", \"blender_export.py\", \"coco_labels.py\", \"config.py\", \"connector3d.py\", \"connector_constants.py\", \"dataset_convert.py\", \"demo_all.py\", \"diffusionnet.py\", \"feature_geometry.py\", \"hpo_ray.py\", \"infer_pipeline.py\", \"instances.py\", \"meshcnn.py\", \"meshio.py\", \"mesh_utils.py\", \"metrics.py\", \"projection_2d3d.py\", \"remesh.py\", \"run_on_file.py\", \"setup.py\", \"visualization.py\", \"yolo6.py\"\\) | ForEach-Object { \"c:\\\\Users\\\\DE00024082\\\\Desktop\\\\code\\\\$_\" })",
+      "PowerShell(cd \"c:\\\\Users\\\\DE00024082\\\\Desktop\\\\code\"; $mods = \"augment\",\"coco_labels\",\"connector3d\",\"connector_constants\",\"feature_geometry\",\"instances\",\"mesh_utils\",\"meshio\",\"metrics\",\"projection_2d3d\",\"remesh\",\"visualization\",\"yolo6\",\"diffusionnet\",\"meshcnn\",\"hpo_ray\",\"dataset_convert\",\"config\",\"run_on_file\",\"infer_pipeline\"; foreach \\($m in $mods\\) { $out = & .\\\\.venv\\\\Scripts\\\\python.exe \"$m.py\" 2>&1; $code = $LASTEXITCODE; $tag = if \\($code -eq 0\\) { \"PASS\" } else { \"FAIL\\(code=$code\\)\" }; \"{0,-20} {1}\" -f $m, $tag })",
+      "PowerShell(cd \"c:\\\\Users\\\\DE00024082\\\\Desktop\\\\code\"; foreach \\($m in \"diffusionnet\",\"meshcnn\",\"hpo_ray\"\\) { Write-Output \"===== $m =====\"; & .\\\\.venv\\\\Scripts\\\\python.exe \"$m.py\" 2>&1 | Select-Object -Last 6; Write-Output \"\" })",
+      "Bash(wsl -l -v)",
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(wsl --install -d Ubuntu --no-launch)",
+      "Bash(wsl -d Ubuntu -e bash -lc 'whoami; uname -a; python3 --version 2>&1; echo HOME=$HOME')",
+      "Bash(wsl -d Ubuntu -e bash -lc 'ls /mnt/c/Users/DE00024082/Desktop/code/train_cp.py && echo REPO_OK; python3 -c \"import venv\" 2>&1 && echo VENV_OK || echo VENV_MISSING; python3 -m ensurepip --version 2>&1 | head -1')",
+      "Bash(wsl -d Ubuntu -e bash -lc 'apt-get update -qq 2>&1 | tail -2 && apt-get install -y python3-venv python3-pip 2>&1 | tail -8')",
+      "Bash(wsl -d Ubuntu -e bash -lc 'python3 -m venv ~/cpenv && source ~/cpenv/bin/activate && pip install --upgrade pip 2>&1 | tail -3')",
+      "Bash(wsl -d Ubuntu -e bash -lc 'source ~/cpenv/bin/activate && pip install numpy scipy ijson 2>&1 | tail -5')",
+      "Bash(wsl -d Ubuntu -e bash -lc 'source ~/cpenv/bin/activate && pip install torch --index-url https://download.pytorch.org/whl/cpu 2>&1 | tail -8')",
+      "Bash(wsl -d Ubuntu -e bash -lc 'source ~/cpenv/bin/activate && pip install torch --index-url https://download.pytorch.org/whl/cpu --trusted-host download.pytorch.org 2>&1 | tail -8')",
+      "Bash(wsl -d Ubuntu -e bash -lc 'source ~/cpenv/bin/activate && pip install torch --index-url https://download.pytorch.org/whl/cpu --trusted-host download.pytorch.org --trusted-host download-r2.pytorch.org 2>&1 | tail -6')",
+      "Bash(wsl -d Ubuntu -e bash -lc 'source ~/cpenv/bin/activate && pip install robust_laplacian potpourri3d 2>&1 | tail -10')",
+      "Bash(wsl -d Ubuntu -e bash -lc 'source ~/cpenv/bin/activate && pip install \"git+https://github.com/nmwsharp/diffusion-net.git\" 2>&1 | tail -10')",
+      "Bash(wsl -d Ubuntu -e bash -lc 'source ~/cpenv/bin/activate && rm -rf /tmp/diffusion-net && git -c http.sslVerify=false clone --depth 1 https://github.com/nmwsharp/diffusion-net.git /tmp/diffusion-net 2>&1 | tail -3 && pip install /tmp/diffusion-net 2>&1 | tail -6')",
+      "Bash(wsl -d Ubuntu -e bash -lc 'ls /tmp/diffusion-net; echo \"---src---\"; ls /tmp/diffusion-net/src 2>/dev/null; echo \"---pkg---\"; ls /tmp/diffusion-net/src/diffusion_net 2>/dev/null; echo \"---reqs---\"; cat /tmp/diffusion-net/environment.yml 2>/dev/null | head -40')",
+      "Bash(wsl -d Ubuntu -e bash -lc 'grep -hE \"^\\(import|from\\) \" /tmp/diffusion-net/src/diffusion_net/*.py | grep -vE \"diffusion_net|^from \\\\.| \\\\.\" | sort -u')",
+      "Bash(wsl -d Ubuntu -e bash -lc ' *)",
+      "Bash(wsl -d Ubuntu -e bash -lc 'source ~/cpenv/bin/activate && python3 -c \"import robust_laplacian, potpourri3d, torch, diffusion_net; print\\(\\\\\"OK\\\\\", torch.__version__\\)\"')",
+      "Bash(wsl -d Ubuntu -e bash -lc 'source ~/cpenv/bin/activate && cd /mnt/c/Users/DE00024082/Desktop && python3 make_samples.py /mnt/c/Users/DE00024082/Desktop/abb_samples 6')",
+      "Bash(wsl -d Ubuntu -e bash -lc 'source ~/cpenv/bin/activate && cd /mnt/c/Users/DE00024082/Desktop/code && python3 -c \" *)",
+      "Bash(wsl -d Ubuntu -e bash -lc 'ls -la /mnt/c/Users/DE00024082/Desktop/op_cache/ 2>&1 | head; echo \"---count---\"; find /mnt/c/Users/DE00024082/Desktop/op_cache -type f 2>/dev/null | wc -l')",
+      "Bash(ls \"C:/Users/DE00024082/.claude/projects/c--Users-DE00024082-Desktop-code/memory/\" 2>&1 | head; echo \"---\"; cat \"C:/Users/DE00024082/.claude/projects/c--Users-DE00024082-Desktop-code/memory/MEMORY.md\" 2>&1 | head)",
+      "Read(//c/Users/DE00024082/.claude/projects/c--Users-DE00024082-Desktop-code/**)",
+      "Bash(nvidia-smi --query-gpu=name,memory.total --format=csv)",
+      "Bash(wsl -d Ubuntu -e bash -lc 'source ~/cpenv/bin/activate && pip install torch --index-url https://download.pytorch.org/whl/cu128 --trusted-host download.pytorch.org --trusted-host download-r2.pytorch.org 2>&1 | tail -6')",
+      "Bash(wsl -d Ubuntu -e bash -lc 'source ~/cpenv/bin/activate && pip install torch --index-url https://download.pytorch.org/whl/cu128 --trusted-host download.pytorch.org --trusted-host download-r2.pytorch.org --force-reinstall --no-deps 2>&1 | tail -6')",
+      "Bash(wsl -d Ubuntu -e bash -lc 'source ~/cpenv/bin/activate && python3 -c \" *)",
+      "Bash(wsl -d Ubuntu -e bash -lc 'source ~/cpenv/bin/activate && pip install torch --index-url https://download.pytorch.org/whl/cu128 --trusted-host download.pytorch.org --trusted-host download-r2.pytorch.org 2>&1 | tail -8')",
+      "Bash(wsl -d Ubuntu -e bash -lc 'source ~/cpenv/bin/activate && pip install torch --index-url https://download.pytorch.org/whl/cu128 --trusted-host download.pytorch.org --trusted-host download-r2.pytorch.org --trusted-host pypi.nvidia.com 2>&1 | tail -8')",
+      "Bash(wsl -d Ubuntu -e bash -lc 'source ~/cpenv/bin/activate && nohup python3 -u /mnt/c/Users/DE00024082/Desktop/run_full.py > /mnt/c/Users/DE00024082/Desktop/run_full.log 2>&1 & echo \"launched PID $!\"')",
+      "Bash(wsl -d Ubuntu -e bash -lc 'pkill -f run_full.py 2>/dev/null; pkill -f \"train_cp\" 2>/dev/null; sleep 2; ps aux | grep -E \"run_full|train_cp|cpenv\" | grep -v grep | head || echo \"no lingering job\"')"
+    ]
+  }
+}

@@ -26,7 +26,153 @@
 import logging
 import numpy as np
 
-from mesh_utils import edge_features, mesh_edges as _mesh_edges, vertex_to_edge
+# ---------------------------------------------------------------------------
+# Mesh utilities (merged from mesh_utils.py)
+# ---------------------------------------------------------------------------
+
+BACKGROUND = 0  # default label for unlabeled vertices, edges, and faces
+
+
+def mesh_edges(faces):
+    """Return all unique undirected edges as (E, 2) array of node index pairs."""
+    edge_set = set()
+    for tri in faces:
+        a, b, c = int(tri[0]), int(tri[1]), int(tri[2])
+        edge_set.add((min(a, b), max(a, b)))
+        edge_set.add((min(b, c), max(b, c)))
+        edge_set.add((min(a, c), max(a, c)))
+    return np.array(sorted(edge_set), dtype=int)
+
+
+def vertex_to_face(faces, vertex_labels, bg=BACKGROUND):
+    """Assign a label to each triangle (shared label only when all 3 corners agree)."""
+    face_labels = []
+    for tri in faces:
+        a, b, c = int(tri[0]), int(tri[1]), int(tri[2])
+        la, lb, lc = vertex_labels[a], vertex_labels[b], vertex_labels[c]
+        face_labels.append(la if la == lb == lc else bg)
+    return np.array(face_labels, dtype=int)
+
+
+def vertex_to_edge(edges, vertex_labels, bg=BACKGROUND):
+    """Assign a label to each edge (shared label only when both endpoints agree)."""
+    edge_labels = []
+    for edge in edges:
+        a, b = int(edge[0]), int(edge[1])
+        la, lb = vertex_labels[a], vertex_labels[b]
+        edge_labels.append(la if la == lb else bg)
+    return np.array(edge_labels, dtype=int)
+
+
+def face_to_vertex(faces, face_labels, n_vertices, bg=BACKGROUND):
+    """Assign a label to each vertex using majority vote from neighboring faces."""
+    n_classes = max(int(max(face_labels)), bg) + 1
+    votes = [[0] * n_classes for _ in range(n_vertices)]
+    for i, tri in enumerate(faces):
+        label = int(face_labels[i])
+        for corner in tri:
+            votes[int(corner)][label] += 1
+    result = []
+    for v in range(n_vertices):
+        total = sum(votes[v])
+        result.append(votes[v].index(max(votes[v])) if total > 0 else bg)
+    return np.array(result, dtype=int)
+
+
+def edge_to_vertex(edges, edge_labels, n_vertices, bg=BACKGROUND):
+    """Assign a label to each vertex using majority vote from neighboring edges."""
+    n_classes = max(int(max(edge_labels)), bg) + 1
+    votes = [[0] * n_classes for _ in range(n_vertices)]
+    for i, edge in enumerate(edges):
+        label = int(edge_labels[i])
+        for endpoint in edge:
+            votes[int(endpoint)][label] += 1
+    result = []
+    for v in range(n_vertices):
+        total = sum(votes[v])
+        result.append(votes[v].index(max(votes[v])) if total > 0 else bg)
+    return np.array(result, dtype=int)
+
+
+def _build_edge_table(faces):
+    edge_of = {}
+    edges = []
+    opp = []
+
+    def get_or_add_edge(u, v):
+        key = (min(u, v), max(u, v))
+        if key not in edge_of:
+            edge_of[key] = len(edges)
+            edges.append(key)
+            opp.append([-1, -1])
+        return edge_of[key]
+
+    for tri in faces:
+        a, b, c = int(tri[0]), int(tri[1]), int(tri[2])
+        for u, v, w in [(a, b, c), (b, c, a), (a, c, b)]:
+            ei = get_or_add_edge(u, v)
+            if opp[ei][0] == -1:
+                opp[ei][0] = w
+            elif opp[ei][1] == -1:
+                opp[ei][1] = w
+    return edges, opp, edge_of
+
+
+def _triangle_normal(p, q, r):
+    n = np.cross(q - p, r - p)
+    length = np.linalg.norm(n)
+    return n / length if length >= 1e-12 else np.zeros(3)
+
+
+def _angle_at_vertex(apex, p, q):
+    a, b = p - apex, q - apex
+    la, lb = np.linalg.norm(a), np.linalg.norm(b)
+    if la < 1e-12 or lb < 1e-12:
+        return 0.0
+    return float(np.arccos(float(np.clip(np.dot(a, b) / (la * lb), -1.0, 1.0))))
+
+
+def edge_features(vertices, faces):
+    """Compute 5-dim MeshCNN features + 4-ring neighbors for every edge."""
+    V = np.asarray(vertices, dtype=float)
+    edge_list, opp, edge_of = _build_edge_table(faces)
+    num_edges = len(edge_list)
+    feats = np.zeros((num_edges, 5), dtype=float)
+    nbrs = np.full((num_edges, 4), -1, dtype=int)
+
+    for ei in range(num_edges):
+        u, v = edge_list[ei]
+        pu, pv = V[u], V[v]
+        edge_len = np.linalg.norm(pv - pu)
+        raw_opp = sorted(int(x) for x in opp[ei] if x >= 0)
+        w0 = raw_opp[0] if len(raw_opp) > 0 else -1
+        w1 = raw_opp[1] if len(raw_opp) > 1 else -1
+        angles, ratios, normals, ring_edges = [], [], [], []
+        for w in [w0, w1]:
+            if w < 0:
+                continue
+            pw = V[w]
+            angles.append(_angle_at_vertex(pw, pu, pv))
+            cross = np.cross(pv - pu, pw - pu)
+            area = 0.5 * np.linalg.norm(cross)
+            height = (2.0 * area / edge_len) if edge_len > 1e-12 else 1e-12
+            ratios.append(edge_len / height if height > 1e-12 else 0.0)
+            normals.append(_triangle_normal(pu, pv, pw))
+            ring_edges += [(u, w), (v, w)]
+        dihedral = (float(np.arccos(float(np.clip(np.dot(normals[0], normals[1]), -1.0, 1.0))))
+                    if len(normals) == 2 else 0.0)
+        angles = sorted(angles) + [0.0] * (2 - len(angles))
+        ratios = sorted(ratios) + [0.0] * (2 - len(ratios))
+        feats[ei] = [dihedral, angles[0], angles[1], ratios[0], ratios[1]]
+        for k, (a, b) in enumerate(ring_edges[:4]):
+            nbrs[ei, k] = edge_of.get((min(a, b), max(a, b)), -1)
+
+    return np.array(edge_list, dtype=int), feats, nbrs
+
+
+_mesh_edges = mesh_edges  # alias used internally
+
+# ---------------------------------------------------------------------------
 
 logger = logging.getLogger(__name__)
 

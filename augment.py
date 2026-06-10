@@ -1,33 +1,12 @@
-# Data augmentation for triangle meshes.
-#
-# Three combinable techniques:
-#   1. Random rotations (rotation matrix from uniformly distributed angles)
-#   2. Lognormal noise (mu=0, sigma=0.005), multiplied element-wise so the
-#      sign of each coordinate is preserved
-#   3. Intentional deformation of feature regions via As-Rigid-As-Possible (ARAP)
-#
-# After adding noise, the mesh is smoothed with an average, Laplace, or Taubin
-# filter. Rotations do not change labels; noise/smoothing/ARAP only move vertex
-# positions, they never touch labels.
-#
-# Reference: Scheffler (2022), §5.1.2, §5.3.3
-#   §5.1.2 / Abb.31 – lognormal noise µ=0, σ=0.005
-#   §5.1.2 / Abb.32 – Laplace / average / Taubin smoothing after noise
-#   §5.1.2 / Abb.32 – As-Rigid-As-Possible (ARAP) deformation (Sorkine & Alexa 2007)
-#   §5.1.2           – random rotation matrix
-#   §5.3.3           – cotangent Laplacian used inside ARAP deformation
+# mesh augmentation (rotation, scaling, noise)
 
 import logging
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
-
-# ---------------------------------------------------------------------------
 # 1) random rotation
-# ---------------------------------------------------------------------------
 
-# §5.1.2 – random rotation matrix (uniformly distributed Euler angles)
 def random_rotation(vertices, rng=None, about_center=True):
     """Rotate mesh by random Euler angles (uniform in [0, 2*pi))."""
     rng = rng or np.random.default_rng()
@@ -46,12 +25,8 @@ def random_rotation(vertices, rng=None, about_center=True):
         return (V - c) @ R.T + c
     return V @ R.T
 
-
-# ---------------------------------------------------------------------------
 # 2) lognormal noise + smoothing
-# ---------------------------------------------------------------------------
 
-# §5.1.2 / Abb.31 – lognormal noise µ=0, σ=0.005 applied element-wise to vertex coordinates
 def add_lognormal_noise(vertices, sigma=0.005, mu=0.0, rng=None):
     """Multiply each vertex coordinate by a lognormal(mu, sigma) factor.
 
@@ -63,15 +38,12 @@ def add_lognormal_noise(vertices, sigma=0.005, mu=0.0, rng=None):
     factor = rng.lognormal(mean=mu, sigma=sigma, size=V.shape)
     return V * factor
 
-
 def _adjacency(faces, n):
     nb = [set() for _ in range(n)]
     for a, b, c in np.asarray(faces, dtype=int):
         nb[a].update((b, c)); nb[b].update((a, c)); nb[c].update((a, b))
     return [np.array(sorted(s), dtype=int) for s in nb]
 
-
-# §5.1.2 / Abb.32 – average smoothing after noise
 def smooth_average(vertices, faces, iterations=1):
     """Average filter: v_i = (v_i + sum_neighbors v_n) / (|N| + 1)."""
     V = np.asarray(vertices, dtype=float).copy()
@@ -84,8 +56,6 @@ def smooth_average(vertices, faces, iterations=1):
         V = out
     return V
 
-
-# §5.1.2 / Abb.32 – Laplace smoothing after noise
 def smooth_laplace(vertices, faces, lam=0.5, iterations=1):
     """Laplace filter: v_i += lam * (mean(neighbors) - v_i)."""
     V = np.asarray(vertices, dtype=float).copy()
@@ -98,8 +68,6 @@ def smooth_laplace(vertices, faces, lam=0.5, iterations=1):
         V = out
     return V
 
-
-# §5.1.2 / Abb.32 – Taubin smoothing after noise (prevents shrinkage)
 def smooth_taubin(vertices, faces, lam=0.5, mu=-0.53, iterations=5):
     """Taubin smoothing: alternating lam (>0) and mu (<0) passes.
 
@@ -120,12 +88,8 @@ def smooth_taubin(vertices, faces, lam=0.5, mu=-0.53, iterations=5):
         V = pass_(V, mu)
     return V
 
-
-# ---------------------------------------------------------------------------
 # 3) As-Rigid-As-Possible (ARAP) deformation (Sorkine & Alexa 2007)
-# ---------------------------------------------------------------------------
 
-# §5.3.3 – cotangent Laplacian weights used as the system matrix for ARAP
 def _cotangent_weights(V, F):
     """Cotangent weights per directed edge as dict {(i,j): w}."""
     from collections import defaultdict
@@ -141,8 +105,6 @@ def _cotangent_weights(V, F):
             w[(b, a)] += 0.5 * cot
     return w
 
-
-# §5.1.2 / Abb.32 – As-Rigid-As-Possible (ARAP) deformation, Sorkine & Alexa 2007
 def arap_deform(vertices, faces, constraints, iterations=3):
     """ARAP deformation with hard positional constraints.
 
@@ -219,7 +181,6 @@ def arap_deform(vertices, faces, constraints, iterations=3):
 
     return P
 
-
 def arap_deform_features(vertices, faces, labels, feature_classes=(1, 2, 3, 4),
                          n_points=None, magnitude=0.03, rng=None, iterations=3):
     """Deliberate feature deformation.
@@ -251,10 +212,7 @@ def arap_deform_features(vertices, faces, labels, feature_classes=(1, 2, 3, 4),
 
     return arap_deform(V, faces, constraints, iterations=iterations)
 
-
-# ---------------------------------------------------------------------------
 # orchestration: full augmentation pass
-# ---------------------------------------------------------------------------
 
 def augment(vertices, faces, labels=None, rng=None, seed=None,
             do_rotate=True, do_noise=True, do_deform=True,
@@ -284,7 +242,6 @@ def augment(vertices, faces, labels=None, rng=None, seed=None,
         V = arap_deform_features(V, F, labels, rng=rng)
     return V, F
 
-
 def _random_rotation_matrix(rng):
     """Uniformly random 3x3 rotation matrix (for centroid-stability testing)."""
     axis = rng.normal(size=3)
@@ -299,8 +256,6 @@ def _random_rotation_matrix(rng):
         [z*x*C - y*s, z*y*C + x*s, c + z*z*C],
     ])
 
-
-# §6 (validation) – verify the detector recovers centroids under tilt + noise.
 def verify_centroid_stability(vertices, faces, labels, tol_mm=1.0, n_trials=5,
                               noise_sigma=0.0, seed=0, run_fn=None):
     """Check that ConnectionPointDetector centroids are pose-invariant.
@@ -358,10 +313,7 @@ def verify_centroid_stability(vertices, faces, labels, tol_mm=1.0, n_trials=5,
         "n_trials": int(n_trials),
     }
 
-
-# ---------------------------------------------------------------------------
 # self-test
-# ---------------------------------------------------------------------------
 
 def _demo():
     res = 16
@@ -394,7 +346,6 @@ def _demo():
     Va, _ = augment(V, F, L, seed=1)
     print(f"[full]   augmented clone: {len(Va)} vertices, faces unchanged={F.shape}")
     print("\n[ok] augmentation self-test passed.")
-
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")

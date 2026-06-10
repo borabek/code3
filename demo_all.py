@@ -1,3 +1,5 @@
+# demo: run the full connector detection pipeline end-to-end
+
 """
 Comprehensive demo suite for connector3d pipeline.
 
@@ -32,10 +34,7 @@ from projection_2d3d import (
 )
 from config import PipelineConfig
 
-
-# ============================================================================
 # TEST 1: Alignment (from demo_align.py)
-# ============================================================================
 
 def angle_deg(a, b):
     """Angle between two vectors in degrees."""
@@ -43,12 +42,10 @@ def angle_deg(a, b):
     b = b / np.linalg.norm(b)
     return float(np.degrees(np.arccos(np.clip(abs(np.dot(a, b)), -1.0, 1.0))))
 
-
 def rot_x(theta):
     """Rotation matrix around X-axis."""
     c, s = np.cos(theta), np.sin(theta)
     return np.array([[1, 0, 0], [0, c, -s], [0, s, c]], dtype=float)
-
 
 def _make_bowl_mesh(res=60, size=1.0, cavity_r=0.28, depth=0.25):
     """Create a funnel-shaped mesh for testing."""
@@ -78,7 +75,6 @@ def _make_bowl_mesh(res=60, size=1.0, cavity_r=0.28, depth=0.25):
     r = np.hypot(verts[:, 0] - cx, verts[:, 1] - cy)
     labels[r < cavity_r] = CABLE_ENTRY
     return verts, np.array(faces, dtype=int), labels
-
 
 def test_alignment():
     """Test bbox-aligned normals on tilted meshes."""
@@ -110,10 +106,7 @@ def test_alignment():
     print(f"  aligned (bbox)  : {np.round(aligned, 3)}   error = {angle_deg(aligned, true_n):.2f} deg")
     print("[OK] Alignment test passed")
 
-
-# ============================================================================
 # TEST 2: Normal Vectors (from demo_normal.py)
-# ============================================================================
 
 def test_normal():
     """Test normal vector computation on funnel meshes."""
@@ -134,10 +127,7 @@ def test_normal():
         print(f"       size     : {inst.size:.4f}")
     print("[OK] Normal vector test passed")
 
-
-# ============================================================================
 # TEST 3: Wiring Candidates (from demo_wiring.py)
-# ============================================================================
 
 class FakeContact:
     """Fake contact for wiring tests."""
@@ -147,7 +137,6 @@ class FakeContact:
         self.center = np.array(center, dtype=float)
         self.normal3d = np.array(normal, dtype=float)
         self.wires = []
-
 
 def test_wiring():
     """Test wiring candidate filtering logic."""
@@ -175,10 +164,7 @@ def test_wiring():
         print(f"   contact {c.name}  ->  {targets}")
     print("[OK] Wiring test passed")
 
-
-# ============================================================================
 # TEST 4: 2D→3D Projection (from demo_projection.py)
-# ============================================================================
 
 def _make_test_part(res=70, size=1.0, cavity_r=0.16, depth=0.22):
     """Create test part (plate with funnel + features)."""
@@ -211,7 +197,6 @@ def _make_test_part(res=70, size=1.0, cavity_r=0.16, depth=0.22):
     L[(x > 0.80) & (y > 0.46) & (y < 0.60)]      = LABEL_SURFACE
     return V, F, L
 
-
 def _fake_yolo_detections(V, L, bounds, res=512, view="z+"):
     """Simulate YOLOv6 detections from projected feature vertices."""
     dets = []
@@ -226,7 +211,6 @@ def _fake_yolo_detections(V, L, bounds, res=512, view="z+"):
         conf = 0.55 + 0.4 * (cls / 4.0)
         dets.append(Detection(view, (x0, y0, x1, y1), conf=conf, cls=int(cls)))
     return dets
-
 
 def test_projection():
     """Test 2D→3D crop pipeline end-to-end."""
@@ -264,10 +248,7 @@ def test_projection():
                   f"normal={np.round(inst.normal3d, 2)}")
     print("[OK] Projection test passed")
 
-
-# ============================================================================
 # TEST 5: Full Connector (from demo_connector.py)
-# ============================================================================
 
 def _make_grid_mesh(res=50, size=1.0):
     """Create grid mesh for connector test."""
@@ -286,7 +267,6 @@ def _make_grid_mesh(res=50, size=1.0):
             faces.append((a, d, c))
     return verts, np.array(faces, dtype=int)
 
-
 def _make_demo_labels(verts):
     """Create labels for connector test part."""
     x, y = verts[:, 0], verts[:, 1]
@@ -298,7 +278,6 @@ def _make_demo_labels(verts):
     labels[(y < 0.14) & (x > 0.30) & (x < 0.47)] = SNAP_POINT
     labels[(y < 0.14) & (x > 0.53) & (x < 0.70)] = SNAP_POINT
     return labels
-
 
 def test_connector():
     """Test 3D connector with split features."""
@@ -329,10 +308,7 @@ def test_connector():
     print(f"\n[graph] {len(graph['nodes'])} nodes, {len(graph['links'])} links  ->  {os.path.basename(out)}")
     print("[OK] Connector test passed")
 
-
-# ============================================================================
 # TEST 6: E2E Inference pipeline
-# ============================================================================
 
 def test_infer():
     """Test E2E inference pipeline (§5.3.7) including hybrid DN+YOLO path."""
@@ -344,10 +320,7 @@ def test_infer():
     _selftest(PipelineConfig())
     print("[OK] E2E inference test passed")
 
-
-# ============================================================================
 # Main
-# ============================================================================
 
 def main():
     parser = argparse.ArgumentParser(description="Connector3D demo suite")
@@ -387,7 +360,6 @@ def main():
     print("\n" + "="*70)
     print("ALL DEMOS COMPLETED")
     print("="*70)
-
 
 if __name__ == "__main__":
     main()

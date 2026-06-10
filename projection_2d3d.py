@@ -1,26 +1,4 @@
-# 2D detections -> 3D crops ("the workaround").
-#
-# Background: the end-to-end network did not reliably find features in 3D meshes.
-# The workaround is:
-#
-#   1. Render the 3D part from 6 directions orthographically -> 6 images (512x512).
-#   2. YOLOv6 draws bounding boxes around features in each 2D image.
-#      Detections below a confidence threshold are discarded.
-#   3. Each 2D box lies flat on one side of the part -- it has no depth.
-#      We "pull" the box all the way through the model along the view direction
-#      and get an axis-aligned 3D box (a slab).
-#   4. The part of the mesh inside this 3D box is cropped and analyzed further
-#      (centroid / vectors -> see feature_geometry.py).
-#
-# Important convention: forward projection (render) and inverse (box -> slab)
-# must use the same camera convention. Anyone generating the 6 images for YOLOv6
-# should use project_points() / render_view() from this file so that axes and
-# mirroring stay consistent.
-#
-# Reference: Scheffler (2022), §5.3.7, §2.4
-#   §5.3.7 / Abb.46 – 2D bbox -> 3D slab crop: stretch bbox through full depth axis
-#   §2.4 / Abb.28   – 6 orthographic views: top/bottom/front/rear/left/right =
-#                      z+/z-/y+/y-/x+/x-
+# 2D->3D projection helpers for the YOLO detection branch
 
 import os
 import json
@@ -33,10 +11,8 @@ from feature_geometry import convex_hull_volume_centroid
 
 logger = logging.getLogger(__name__)
 
-
-# ---------------------------------------------------------------------------
 # camera convention for the 6 orthographic views
-# ---------------------------------------------------------------------------
+
 # Each view looks along one axis. Two axes lie in the image plane
 # (u = image column, v = image row); the third is depth.
 # Row 0 is at the top, so v is flipped during rendering.
@@ -50,8 +26,6 @@ class ViewSpec:
     u_sign: int = 1
     v_sign: int = 1
 
-
-# §2.4 / Abb.28 – 6 orthographic views: z+=top, z-=bottom, y+=front, y-=rear, x+=right, x-=left
 # x=0, y=1, z=2
 VIEWS = {
     "z+": ViewSpec("z+", depth_axis=2, u_axis=0, v_axis=1, u_sign=+1, v_sign=+1),  # top
@@ -71,10 +45,7 @@ VIEW_ORDER = ["x+", "x-", "y+", "y-", "z+", "z-"]
 SNAP_POINT = 2
 YOLO_PIPELINE_CLASSES = (SNAP_POINT,)
 
-
-# ---------------------------------------------------------------------------
 # part bounding box (shared reference frame for render + back-projection)
-# ---------------------------------------------------------------------------
 
 def world_aabb(vertices, pad_frac=0.0):
     """Axis-aligned bounding box (lo, hi) of the vertices.
@@ -91,16 +62,12 @@ def world_aabb(vertices, pad_frac=0.0):
         hi = hi + pad
     return lo, hi
 
-
 def _extent(lo, hi):
     ext = np.asarray(hi, dtype=float) - np.asarray(lo, dtype=float)
     ext[ext == 0] = 1.0  # avoid division by zero on degenerate axis
     return ext
 
-
-# ---------------------------------------------------------------------------
 # forward: 3D vertices -> pixels (for generating training images / testing)
-# ---------------------------------------------------------------------------
 
 def project_points(view, points, bounds, res=512):
     """Project 3D points to pixel coordinates in the given view.
@@ -123,7 +90,6 @@ def project_points(view, points, bounds, res=512):
     px = u_norm * (res - 1)
     py = (1.0 - v_norm) * (res - 1)  # row 0 is at the top
     return np.stack([px, py], axis=1)
-
 
 def render_view(view, vertices, bounds, res=512):
     """Lightweight orthographic depth/silhouette renderer (vertex splat).
@@ -156,10 +122,7 @@ def render_view(view, vertices, bounds, res=512):
     depth[~mask] = 1.0
     return depth, mask
 
-
-# ---------------------------------------------------------------------------
 # YOLOv6 detections
-# ---------------------------------------------------------------------------
 
 @dataclass
 class Detection:
@@ -179,12 +142,10 @@ class Detection:
     def as_xyxy(self):
         return tuple(float(v) for v in self.bbox)
 
-
 # Robotic-vocabulary alias for a 2D image-space detection.
 ImageDetection = Detection
 # Alias for the orthographic camera view specification.
 CameraViewSpec = ViewSpec
-
 
 def filter_detections(detections, conf_thresh=0.25):
     """Discard detections below the confidence threshold."""
@@ -194,7 +155,6 @@ def filter_detections(detections, conf_thresh=0.25):
         logger.debug("filter_detections: %d of %d below conf=%.2f discarded",
                      dropped, len(detections), conf_thresh)
     return kept
-
 
 def load_detections(path, res=512, class_map=None):
     """Load detections from a file.
@@ -239,7 +199,6 @@ def load_detections(path, res=512, class_map=None):
     logger.debug("load_detections: %d detections from %s", len(out), os.path.basename(path))
     return out
 
-
 def _xywhn_to_xyxy(xywh, res):
     xc, yc, w, h = xywh
     x0 = (xc - w / 2.0) * (res - 1)
@@ -248,12 +207,8 @@ def _xywhn_to_xyxy(xywh, res):
     y1 = (yc + h / 2.0) * (res - 1)
     return (x0, y0, x1, y1)
 
-
-# ---------------------------------------------------------------------------
 # inverse: 2D box -> 3D slab (the box "pulled through" the model)
-# ---------------------------------------------------------------------------
 
-# §5.3.7 / Abb.46 – 2D bbox -> 3D slab: stretch bbox through full depth axis
 def box_to_3d_slab(view, bbox, bounds, res=512, pad_frac=0.0, depth_pad_frac=0.0,
                    min_depth_extent=0.0):
     """Convert a 2D pixel box to an axis-aligned 3D slab.
@@ -312,10 +267,7 @@ def box_to_3d_slab(view, bbox, bounds, res=512, pad_frac=0.0, depth_pad_frac=0.0
 
     return lo3, hi3
 
-
-# ---------------------------------------------------------------------------
 # crop: reduce the mesh to the 3D box
-# ---------------------------------------------------------------------------
 
 def crop_mesh_to_box(vertices, faces, aabb3d, face_mode="all", eps_frac=1e-4,
                      depth_axis=None, front_band_frac=None):
@@ -372,15 +324,11 @@ def crop_mesh_to_box(vertices, faces, aabb3d, face_mode="all", eps_frac=1e-4,
     sub_F = remap[kept_faces]
     return sub_V, sub_F, vertex_index
 
-
 def crop_labels(labels, vertex_index):
     """Slice labels to match the crop (same order as sub_V)."""
     return np.asarray(labels)[vertex_index]
 
-
-# ---------------------------------------------------------------------------
 # crop analysis: centroid + principal axes
-# ---------------------------------------------------------------------------
 
 def crop_center_of_gravity(sub_V, sub_F=None):
     """Compute centroid and principal axes of a crop.
@@ -418,10 +366,7 @@ def crop_center_of_gravity(sub_V, sub_F=None):
     extents = np.sqrt(np.clip(eigval[order], 0, None)) * 2.0
     return {"center": center, "volume_center": volume_center, "axes": axes, "extents": extents}
 
-
-# ---------------------------------------------------------------------------
 # all together: detections -> crops
-# ---------------------------------------------------------------------------
 
 @dataclass
 class Crop:
@@ -436,7 +381,6 @@ class Crop:
     def confidence_score(self):
         """Detector confidence carried through from the source 2D detection."""
         return float(self.detection.conf)
-
 
 def detections_to_crops(vertices, faces, detections, bounds=None, res=512,
                         conf_thresh=0.25, pad_frac=0.0, face_mode="all",
@@ -485,10 +429,7 @@ def detections_to_crops(vertices, faces, detections, bounds=None, res=512,
     logger.debug("detections_to_crops: %d crops from %d detections", len(crops), len(kept))
     return crops
 
-
-# ---------------------------------------------------------------------------
 # self-test
-# ---------------------------------------------------------------------------
 
 def _demo():
     # A plate with a round cavity (like demo_normal). We project the cavity
@@ -548,7 +489,6 @@ def _demo():
 
     ok = recall > 0.9 and abs(crop.cog["center"][0] - 0.5) < 0.05 and abs(crop.cog["center"][1] - 0.5) < 0.05
     print("\n[ok] round-trip passed." if ok else "\n[!!] round-trip suspicious -- please check.")
-
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")

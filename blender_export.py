@@ -1,3 +1,5 @@
+# Blender script: import mesh, assign labels, export scene
+
 """
 Headless Blender integration for the connector-3D pipeline.
 
@@ -72,11 +74,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
-# §5.2.1 – vertex/edge/face label convention: 5 classes in this order
 # 0=Housing, 1=Contact, 2=SnapPoint, 3=CableEntry, 4=LabelSurface
 CLASS_ORDER = ["Housing", "Contact", "SnapPoint", "CableEntry", "LabelSurface"]
-
 
 # ---- argparse: everything after '--' is treated as our arguments ----
 def _parse_args() -> argparse.Namespace:
@@ -99,7 +98,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--scene",  default=None,   help="Optional .obj scene for blender/meshlab (default: <mesh>_scene.obj)")
     parser.add_argument("--config", default=None,   help="Optional JSON config file")
     parser.add_argument("--no-scene", action="store_true", help="Do not write a .obj scene")
-    # §5.2.1 – Blender vertex-group labeling -> 1-D label tensor
+
     parser.add_argument("--extract-labels", default=None, metavar="OUT",
                         help="Extract a 1D label tensor from Blender vertex groups "
                              "and write it to OUT (.labels). "
@@ -110,8 +109,6 @@ def _parse_args() -> argparse.Namespace:
                              "Default: first/active mesh object in the scene.")
     return parser.parse_args(raw)
 
-
-# §5.2.1 – Blender vertex-group labeling -> 1-D label tensor
 # ---- vertex groups -> per-vertex labels ----
 def extract_vertex_group_labels(obj, class_order=None, default=0):
     """Build a label tensor from the Blender vertex groups of a mesh object.
@@ -149,7 +146,6 @@ def extract_vertex_group_labels(obj, class_order=None, default=0):
                 labels[vi] = cid
     return labels
 
-
 def _pick_mesh_object(name=None):
     """Pick a mesh object from the current Blender scene.
 
@@ -171,7 +167,6 @@ def _pick_mesh_object(name=None):
         return active
     return meshes[0]
 
-
 def _run_extract(args) -> None:
     """Extract mode: vertex groups -> write .labels file."""
     from meshio import save_labels
@@ -188,7 +183,6 @@ def _run_extract(args) -> None:
               for c in range(len(CLASS_ORDER)) if (labels == c).any()}
     logger.info("Labels written: %s  (%d vertices, classes: %s)",
                 args.extract_labels, len(labels), counts)
-
 
 # ---- import mesh into Blender ----
 def _import_mesh_to_blender(mesh_path: str) -> bpy.types.Object:
@@ -228,7 +222,6 @@ def _import_mesh_to_blender(mesh_path: str) -> bpy.types.Object:
     logger.info("  Blender object: '%s' (%d vertices)", obj.name, len(obj.data.vertices))
     return obj
 
-
 def _write_obj_simple(path: str, V, F) -> None:
     """Write a minimal .obj file (vertices + faces only, no deps on viz.py)."""
     with open(path, "w", encoding="utf-8") as fh:
@@ -236,7 +229,6 @@ def _write_obj_simple(path: str, V, F) -> None:
             fh.write(f"v {v[0]} {v[1]} {v[2]}\n")
         for f in F:
             fh.write(f"f {f[0]+1} {f[1]+1} {f[2]+1}\n")
-
 
 # ---- write labels as vertex colors into the Blender mesh ----
 def _apply_labels_as_vertex_colors(obj: bpy.types.Object, labels) -> None:
@@ -267,7 +259,6 @@ def _apply_labels_as_vertex_colors(obj: bpy.types.Object, labels) -> None:
 
     logger.info("  vertex colors set (%d loops)", len(vcol.data))
 
-
 # ---- export Blender scene as .obj ----
 def _export_blender_scene(scene_path: str) -> None:
     """Export the entire Blender scene as .obj."""
@@ -277,7 +268,6 @@ def _export_blender_scene(scene_path: str) -> None:
         export_materials=False,
     )
     logger.info("  Blender scene exported: %s", scene_path)
-
 
 # ---- main ----
 def main() -> None:
@@ -362,7 +352,6 @@ def main() -> None:
         logger.info("Blender scene exported: %s", blender_scene)
 
     logger.info("Done.")
-
 
 if __name__ == "__main__":
     main()

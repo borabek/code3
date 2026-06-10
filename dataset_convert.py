@@ -1,9 +1,4 @@
-# CAD -> OBJ conversion + dataset utilities
-#
-# Reference: Scheffler (2022), §5.1.1, §5.1.2
-#   §5.1.1         – web scraping / data aggregation (dataset collection)
-#   §5.1.2         – STEP -> STL -> OBJ -> OFF conversion pipeline
-#   §5.1.2         – 300 s/file timeout, SHA-256 dedup, category filter
+# convert STEP/STL/OBJ meshes to the training format
 
 import os
 import csv
@@ -20,7 +15,6 @@ STEP_EXT = {".step", ".stp"}
 MESH_EXT = {".stl"}
 CONVERTIBLE_EXT = STEP_EXT | MESH_EXT
 
-# §5.1.1 – dataset aggregation: category filter (non-connector parts excluded)
 # categories filtered out (not connectors)
 IGNORED_CATEGORIES = {
     "cabinet engineering", "not categorized", "fluid engineering",
@@ -29,12 +23,8 @@ IGNORED_CATEGORIES = {
     "power source", "loads", "accessories",
 }
 
-
-# ---------------------------------------------------------------------------
 # STEP -> STL  (needs a CAD kernel)
-# ---------------------------------------------------------------------------
 
-# §5.1.2 – STEP -> STL tessellation step of the conversion pipeline
 def step_to_stl(step_path, stl_path, linear_deflection=0.1, angular_deflection=0.5):
     """Tessellate STEP -> STL. Tries gmsh then OpenCASCADE."""
     backend = _pick_step_backend()
@@ -48,7 +38,6 @@ def step_to_stl(step_path, stl_path, linear_deflection=0.1, angular_deflection=0
             "  pip install gmsh\n  pip install cadquery-ocp")
     return stl_path
 
-
 def _pick_step_backend():
     import importlib.util
     if importlib.util.find_spec("gmsh"):
@@ -57,7 +46,6 @@ def _pick_step_backend():
         if importlib.util.find_spec(mod):
             return "occ"
     return None
-
 
 def _step_gmsh(step_path, stl_path, linear_deflection):
     import gmsh
@@ -70,7 +58,6 @@ def _step_gmsh(step_path, stl_path, linear_deflection):
         gmsh.write(stl_path)
     finally:
         gmsh.finalize()
-
 
 def _step_occ(step_path, stl_path, linear_deflection, angular_deflection):
     try:
@@ -91,12 +78,8 @@ def _step_occ(step_path, stl_path, linear_deflection, angular_deflection):
     BRepMesh_IncrementalMesh(shape, linear_deflection, False, angular_deflection, True)
     StlAPI_Writer().Write(shape, stl_path)
 
-
-# ---------------------------------------------------------------------------
 # STL -> OBJ  (pure numpy, via meshio)
-# ---------------------------------------------------------------------------
 
-# §5.1.2 – STL -> OBJ step of the conversion pipeline (pure numpy via meshio)
 def stl_to_obj(stl_path, obj_path):
     """Read STL, weld vertices into an indexed mesh, and save as OBJ."""
     V, F = load_stl(stl_path)
@@ -104,10 +87,7 @@ def stl_to_obj(stl_path, obj_path):
     logger.debug("STL->OBJ: %s -> %s  (%d v, %d f)", stl_path, obj_path, len(V), len(F))
     return obj_path
 
-
-# ---------------------------------------------------------------------------
 # convert a single file to OBJ (STEP via STL, or STL directly)
-# ---------------------------------------------------------------------------
 
 def convert_file(src_path, out_dir, keep_stl=False, linear_deflection=0.1):
     """Convert STEP/STL -> OBJ. Returns OBJ path."""
@@ -131,10 +111,8 @@ def convert_file(src_path, out_dir, keep_stl=False, linear_deflection=0.1):
         raise ValueError(f"Unsupported: {ext} (only {sorted(CONVERTIBLE_EXT)})")
     return obj_path
 
-
-# ---------------------------------------------------------------------------
 # conversion with time limit (300s per file)
-# ---------------------------------------------------------------------------
+
 # Some very large or degenerate STEP files can keep the CAD kernel busy
 # indefinitely. Running conversion in a subprocess and killing it after the
 # timeout means one bad file cannot stall the entire run.
@@ -146,7 +124,6 @@ def _convert_worker(src, out_dir, keep_stl, linear_deflection, q):
         q.put(("ok", obj))
     except Exception as exc:
         q.put(("err", str(exc)))
-
 
 def convert_file_timed(src_path, out_dir, keep_stl=False, linear_deflection=0.1,
                        timeout_sec=None):
@@ -179,11 +156,8 @@ def convert_file_timed(src_path, out_dir, keep_stl=False, linear_deflection=0.1,
         raise RuntimeError(payload)
     return payload
 
-
-# ---------------------------------------------------------------------------
 # geometric dedup check via SHA-256
-# ---------------------------------------------------------------------------
-# §5.1.1 – dataset aggregation: SHA-256 geometric deduplication
+
 # Many parts differ only in electrical specs but have identical geometry
 # (54.12% of STEP files were duplicates). SHA-256 hashes the files to find them.
 
@@ -194,7 +168,6 @@ def sha256_file(path, chunk=1 << 20):
         for block in iter(lambda: fh.read(chunk), b""):
             h.update(block)
     return h.hexdigest()
-
 
 def find_geometric_duplicates(root, exts=(".stl", ".obj", ".off")):
     """Group files under 'root' by content hash.
@@ -213,7 +186,6 @@ def find_geometric_duplicates(root, exts=(".stl", ".obj", ".off")):
             except OSError:
                 continue
     return by_hash
-
 
 def dedupe_tree(root, exts=(".stl", ".obj", ".off"), apply=False):
     """Find and optionally delete geometric duplicates (keep first per hash).
@@ -243,10 +215,7 @@ def dedupe_tree(root, exts=(".stl", ".obj", ".off"), apply=False):
     return {"n_total": n_total, "n_unique": n_unique,
             "n_duplicates": n_total - n_unique, "removed": removed}
 
-
-# ---------------------------------------------------------------------------
 # category filter
-# ---------------------------------------------------------------------------
 
 def filter_by_category(items, metadata, ignored=None, key="category"):
     """Filter items by their category metadata.
@@ -267,10 +236,7 @@ def filter_by_category(items, metadata, ignored=None, key="category"):
         kept.append(it)
     return kept
 
-
-# ---------------------------------------------------------------------------
 # dataset statistics
-# ---------------------------------------------------------------------------
 
 def dataset_stats(root, manufacturer_depth=1):
     """Collect statistics over a dataset directory tree.
@@ -313,7 +279,6 @@ def dataset_stats(root, manufacturer_depth=1):
         "by_manufacturer": dict(sorted(by_manu.items(), key=lambda kv: -kv[1])),
     }
 
-
 def print_stats(stats):
     print("Dataset statistics")
     print(f"  Total files        : {stats['n_files']:,}")
@@ -326,10 +291,7 @@ def print_stats(stats):
         for manu, cnt in top:
             print(f"     {manu:30s} {cnt:,}")
 
-
-# ---------------------------------------------------------------------------
 # convert entire tree + write manifest
-# ---------------------------------------------------------------------------
 
 def convert_tree(root, out_dir, manifest_path=None, keep_stl=False,
                  linear_deflection=0.1, flatten=True, timeout_sec=300):
@@ -393,10 +355,7 @@ def convert_tree(root, out_dir, manifest_path=None, keep_stl=False,
     logger.info("convert_tree done: %d ok, %d errors -> manifest %s", ok, err, manifest_path)
     return {"ok": ok, "errors": err, "manifest": manifest_path}
 
-
-# ---------------------------------------------------------------------------
 # CLI
-# ---------------------------------------------------------------------------
 
 def _build_parser():
     p = argparse.ArgumentParser(
@@ -436,7 +395,6 @@ examples:
     pt.add_argument("--timeout", type=float, default=300)
     return p
 
-
 def main():
     logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
     args = _build_parser().parse_args()
@@ -465,7 +423,6 @@ def main():
                            keep_stl=args.keep_stl, linear_deflection=args.deflection,
                            flatten=not args.mirror, timeout_sec=args.timeout)
         logger.info("Result: %s", res)
-
 
 if __name__ == "__main__":
     main()

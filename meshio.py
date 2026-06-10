@@ -1,8 +1,4 @@
-# mesh + label I/O (.off/.obj/.stl/.labels)
-#
-# Reference: Scheffler (2022), §5.1.2
-#   §5.1.2 / Code 1,2,3 – STL binary/ASCII format, OBJ format, OFF format
-#   §5.1.2               – STEP->STL->OBJ->OFF conversion pipeline (I/O end)
+# mesh I/O: load/save OFF, OBJ, STL
 
 import os
 import struct
@@ -12,8 +8,6 @@ from connector_constants import COORD_ROUNDING
 
 logger = logging.getLogger(__name__)
 
-
-# §5.1.2 / Code 3 – OFF format loader
 def load_off(path):
     """Load OFF mesh. Raises FileNotFoundError/ValueError."""
     if not os.path.exists(path):
@@ -75,8 +69,6 @@ def load_off(path):
     
     return V, np.array(F, dtype=int)
 
-
-# §5.1.2 / Code 2 – OBJ format loader
 def load_obj(path):
     """Load OBJ mesh. Raises FileNotFoundError/ValueError."""
     if not os.path.exists(path):
@@ -111,8 +103,6 @@ def load_obj(path):
     
     return np.array(V, dtype=float), np.array(F, dtype=int)
 
-
-# §5.1.2 / Code 1 – STL binary/ASCII format loader (both variants detected by file size)
 def load_stl(path):
     # STL has two variants: ASCII ("solid ... facet normal ...") and binary
     # (80-byte header, then uint32 triangle count, then per triangle 12 floats
@@ -141,7 +131,6 @@ def load_stl(path):
         return _load_stl_binary(raw)
     return _load_stl_ascii(raw.decode("utf-8-sig", errors="replace"))
 
-
 def _load_stl_binary(raw):
     n_tri = struct.unpack_from("<I", raw, 80)[0]
     # Each 50-byte record is: normal(3f) + 3 corners(3f) + 2-byte attribute.
@@ -156,7 +145,6 @@ def _load_stl_binary(raw):
     tris = data["corners"].astype(float)
     return _weld_triangle_soup(tris)
 
-
 def _load_stl_ascii(text):
     verts = []
     for ln in text.splitlines():
@@ -168,7 +156,6 @@ def _load_stl_ascii(text):
         raise ValueError(f"ASCII STL has {len(verts)} vertices, not a multiple of 3")
     tris = np.array(verts, dtype=float).reshape(-1, 3, 3)
     return _weld_triangle_soup(tris)
-
 
 def _weld_triangle_soup(tris, decimals=COORD_ROUNDING):
     # STL stores a "triangle soup" with no shared vertices — each corner is stored
@@ -186,7 +173,6 @@ def _weld_triangle_soup(tris, decimals=COORD_ROUNDING):
     F = remap[inverse].reshape(-1, 3)
     return V.astype(float), F.astype(int)
 
-
 def load_mesh(path):
     ext = os.path.splitext(path)[1].lower()
     if ext == ".off":
@@ -196,7 +182,6 @@ def load_mesh(path):
     if ext == ".stl":
         return load_stl(path)
     raise ValueError(f"unsupported format: {ext} (only .off / .obj / .stl)")
-
 
 def load_labels(path):
     # one label per vertex, whitespace or newline as separator
@@ -209,7 +194,6 @@ def load_labels(path):
             vals.extend(int(float(t)) for t in s.split())
     return np.array(vals, dtype=int)
 
-
 def save_off(path, V, F):
     with open(path, "w", encoding="utf-8") as fh:
         fh.write("OFF\n")
@@ -219,14 +203,12 @@ def save_off(path, V, F):
         for t in F:
             fh.write(f"3 {t[0]} {t[1]} {t[2]}\n")
 
-
 def save_obj(path, V, F):
     with open(path, "w", encoding="utf-8") as fh:
         for v in V:
             fh.write(f"v {v[0]} {v[1]} {v[2]}\n")
         for t in F:
             fh.write(f"f {int(t[0])+1} {int(t[1])+1} {int(t[2])+1}\n")
-
 
 def save_labels(path, labels):
     with open(path, "w", encoding="utf-8") as fh:

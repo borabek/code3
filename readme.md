@@ -363,11 +363,14 @@ python run_on_file.py part.off part.labels --gap-frac 0.08 --angle-max 25
 | `infer_pipeline.py` | **End-to-end inference**: mesh → DiffusionNet (+ optional YOLO snap-point) → connector graph |
 | `blender_export.py` | Headless Blender: **vertex-group → label extraction** + label-colour viz |
 | `demo_projection.py` | End-to-end demo of the 2D→3D crop feeding the connector pipeline |
-| `json_dataset.py` | **Streaming loader** for the ABB JSON corpus (big array *or* a directory of per-part files); dedups coincident CPs into terminal-block locations |
-| `cp_targets.py` | Per-vertex target **encode** (heatmap+offset+direction) / **decode** (threshold→NMS→exact point) + robot-ready JSON exporter |
-| `cp_regressor.py` | 7-channel regression head: **DiffusionNet** backbone (production) + light MLP (smoke), combined loss, training/inference |
+| `json_dataset.py` | **Streaming loader** for the ABB JSON corpus (big array *or* a directory of per-part files); dedups coincident CPs into terminal-block locations; rejects non-finite coords + drops degenerate faces |
+| `cp_targets.py` | Per-vertex target **encode** (heatmap+offset+direction) / **decode** (threshold→NMS→exact point, `min_votes`) + robot-ready JSON exporter |
+| `cp_regressor.py` | 7-channel regression head with **three backbones** — `diffusionnet` (production, WSL), `knngraph` (EdgeConv, native-Windows, no native deps), `mlp` (smoke); combined loss (BCE/focal), GPU/CPU-hybrid training, best/latest checkpoints |
 | `metrics_cp.py` | Keypoint metrics: localisation (mm), angular (deg), precision/recall/F1 |
-| `train_cp.py` | CLI tying loader+targets+regressor+metrics with a deterministic train/val split |
+| `train_cp.py` | CLI tying loader+targets+regressor+metrics; deterministic split, best-by-F1 checkpoint, early stop, LR schedule, op-cache, GPU OOM fallback |
+| `make_samples.py` | Generate valid synthetic ABB-format parts (triangulated plates + CPs) for smoke-testing the backbones |
+| `run_full.py` | Thin wrapper: full-corpus DiffusionNet run with the known-good flags baked in (forwards to `train_cp.main`) |
+| `run_selftests.py` | Single runner for every module's `_selftest()` (CI-friendly) |
 
 ## Connection-point training from JSON data (Option B)
 
@@ -380,24 +383,127 @@ one XYZ (e.g. `L1/L2/L3/PE`), so coincident points are deduped into
 actually localise. `InsertDirection` is outward (= robot `approach_vector`;
 `insertion_axis = -InsertDirection`).
 
-```bash
-# corpus = a directory of per-part JSON files (e.g. the 429-file folder)
-# smoke-test backbone (torch only, no geometric receptive field):
-python -c "import sys; sys.path.insert(0,'.'); import train_cp; train_cp.main()" \
-    /path/to/abb_corpus --backbone mlp --epochs 300
+### Three backbones
 
-# production backbone (DiffusionNet) — cache the eigenbasis per part (the
-# expensive step at 429-file scale) so it is computed once and reused:
-python -c "import sys; sys.path.insert(0,'.'); import train_cp; train_cp.main()" \
-    /path/to/abb_corpus --backbone diffusionnet --device cuda \
-    --op-cache-dir /path/to/op_cache --epochs 200
+| `--backbone` | Receptive field | Deps | Runs on | Use for |
+|---|---|---|---|---|
+| `diffusionnet` | spectral (Laplacian eigenbasis) | torch + `robust_laplacian` + `potpourri3d` + `scikit-learn` + `diffusion_net` | **Linux / WSL only** | the production model (best accuracy) |
+| `knngraph` | geometric (EdgeConv on a kNN graph) | torch + scipy + numpy | **native Windows or anywhere** | Windows-only deployment / no native deps |
+| `mlp` | none (per-vertex) | torch | anywhere | overfit smoke-tests only — does **not** generalise |
+
+`robust_laplacian` / `potpourri3d` ship native wheels that **segfault on import on
+Windows**, so the production `diffusionnet` backbone runs in **WSL** (see *Running
+on Windows* below). The `knngraph` backbone was added precisely so the detector
+can train *and* deploy on **native Windows** with no native geometry deps — it
+still has a real geometric receptive field (so it generalises across parts),
+unlike `mlp`.
+
+```bash
+# corpus = a directory of per-part JSON files (the 479-file folder) OR one big JSON array
+# production backbone (DiffusionNet, WSL + GPU); cache the eigenbasis per part
+# (the expensive step) so it is built once and reused across epochs/runs:
+python train_cp.py /path/to/abb_corpus --backbone diffusionnet --device cuda \
+    --op-cache-dir /path/to/op_cache --epochs 200 \
+    --eval-every 10 --patience 6 --ckpt cp_model.pt --out results.json
+
+# native-Windows backbone (no WSL, CPU): torch + scipy only
+python train_cp.py /path/to/abb_corpus --backbone knngraph --device cpu \
+    --epochs 200 --ckpt cp_model.pt --out results.json
+
+# reload a trained model later (no retraining):
+#   cp_regressor.load_diffusionnet("cp_model.pt")   # diffusionnet
+#   cp_regressor.load_knngraph("cp_model.pt")       # knngraph
 ```
 
-The `diffusionnet` backbone needs the `diffusion_net` package (clone
-https://github.com/nmwsharp/diffusion-net and add its `src/` to `PYTHONPATH`;
-deps: `robust_laplacian`, `potpourri3d`, `scikit-learn`). The MLP backbone needs
-only `torch` and is for smoke-tests — it memorises a single part well but has no
-receptive field, so it does not generalise across parts.
+> On Windows you can also invoke via the `-c "import sys; sys.path.insert(0,'.'); import train_cp; train_cp.main()"`
+> form if sibling imports misbehave, but running `python train_cp.py ...` from the
+> repo dir works (the script dir is on `sys.path`).
+
+### Training knobs (`train_cp.py`)
+
+| Flag | Default | What it does |
+|---|---|---|
+| `--device` | `cpu` | `cuda` to use the GPU |
+| `--op-cache-dir` | – | cache the DiffusionNet eigenbasis per part (one `.npz`/part; reused across runs) |
+| `--ckpt` / `--ckpt-every` | – / 0 | save the **best-by-val-F1** model; `<ckpt>.latest` is a periodic crash snapshot |
+| `--out` | – | write aggregate + per-part metrics (with timing) to JSON |
+| `--eval-every` / `--patience` | 10 / 0 | val eval cadence; early-stop after N stale evals (0 = off) |
+| `--min-votes` | 2 | min voting vertices per decoded CP (>1 raises precision) |
+| `--heat-loss` / `--focal-gamma` | bce / 2.0 | heatmap loss: weighted BCE or quality-focal |
+| `--lr-decay-every` / `--lr-decay-rate` | 0 / 0.5 | StepLR schedule (0 = off) |
+| `--accum-steps` | 1 | gradient accumulation over N parts |
+| `--max-gpu-verts` | 60000 | parts above this run on CPU even with `--device cuda` (a 4 GB GPU OOMs on big meshes); the optimiser stays on the GPU and gradients are copied back — identical result. CUDA OOM is also caught and retried on CPU |
+| `--low-memory` | off | reload each eigenbasis from cache per step instead of holding all in RAM (corpora larger than memory) |
+| `--seed` | 0 | seeds split + torch/np/random for reproducible runs |
+
+### Pipeline robustness / correctness (recent hardening)
+
+- **Bad meshes are skipped, not fatal** — per-part operator build is guarded; degenerate faces are dropped and non-finite coords rejected at load.
+- **Evaluation is deployment-realistic** — the decode NMS radius is derived from part geometry, not ground truth (no label leak).
+- **Offsets are scale-normalised** end-to-end (matches the normalised input; recovered to mm at decode via `offset_scale`).
+- **Reproducible & schedulable** — seeding + optional StepLR; **best-by-F1** checkpointing with early stopping.
+
+### Quick start without the corpus
+
+```bash
+# generate a few valid synthetic parts, then smoke-test any backbone on them
+python make_samples.py ./abb_samples 6
+python train_cp.py ./abb_samples --backbone knngraph --epochs 40 --ckpt sm.pt
+
+# run every module's selftest
+python run_selftests.py
+```
+
+### Running on Windows (WSL vs native)
+
+The production **`diffusionnet`** backbone needs `robust_laplacian` + `potpourri3d`,
+whose native wheels **segfault on import on Windows** — so it runs in **WSL/Ubuntu**,
+where those exact wheels import cleanly.
+
+**One-time WSL setup** (`setup_wsl.sh` bakes in everything below):
+
+```bat
+:: from Windows (cmd) — installs Ubuntu if missing, builds ~/cpenv, trains:
+run_wsl.bat
+```
+or manually:
+```bash
+wsl --install -d Ubuntu                 # once (no reboot if the WSL feature is on)
+wsl -d Ubuntu -e bash -lc 'bash /mnt/c/Users/<you>/Desktop/code/setup_wsl.sh'
+```
+`setup_wsl.sh` apt-installs `python3-venv`/`pip`/build tools, creates `~/cpenv`,
+installs numpy/scipy/ijson/scikit-learn + torch + `robust_laplacian`/`potpourri3d`,
+clones `diffusion-net` and registers its `src/` via a `.pth` (it has no `setup.py`),
+then runs the **import check** that proves the segfault is gone.
+
+**GPU / CUDA.** WSL2 exposes the Windows NVIDIA GPU to Linux (CUDA passthrough).
+Install a CUDA torch build instead of the CPU one and add `--device cuda`:
+
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cu128 \
+    --trusted-host download.pytorch.org --trusted-host download-r2.pytorch.org \
+    --trusted-host pypi.nvidia.com
+```
+Small GPUs (e.g. a 4 GB laptop card) OOM on the largest meshes — `--max-gpu-verts`
+(default 60000) routes oversized parts to the CPU automatically, and a CUDA OOM is
+caught and retried on CPU, so the full corpus trains without crashing.
+
+**Behind a corporate TLS-inspecting proxy** (self-signed root CA): PyPI works, but
+`download.pytorch.org`/`download-r2.pytorch.org`/`pypi.nvidia.com` need the
+`--trusted-host` flags above, and `git` clones need `git -c http.sslVerify=false`.
+
+**Artifacts live on the Windows drive.** Always write models/caches/results under
+`/mnt/c/...` (= your `C:\...`), **not** `/tmp` (WSL wipes it when the distro
+restarts). The `.pt` checkpoint is portable PyTorch and loads on any machine.
+
+**Native Windows (no WSL)** — use the `knngraph` backbone, which needs only
+torch + scipy + numpy (all have clean Windows wheels):
+
+```bat
+.venv\Scripts\python -m pip install torch --index-url https://download.pytorch.org/whl/cpu ^
+    --trusted-host download.pytorch.org --trusted-host download-r2.pytorch.org
+.venv\Scripts\python train_cp.py C:\path\to\abb_corpus --backbone knngraph --device cpu --ckpt model.pt
+```
 
 ### Coverage & honesty
 
@@ -448,15 +554,20 @@ Three things still legitimately simplify or defer, exactly as in the thesis:
 |---|---|
 | `numpy>=1.24` | Mesh math, normals, clustering |
 | `setuptools>=65.0` | Required by `setup.py` and `pip install -e .` |
+| `scipy>=1.8` | Convex-hull volume centroid; the `knngraph` cKDTree neighbour graph + CP dedup |
+| `ijson>=3.0` | Stream the ~1 GB ABB JSON corpus (`json_dataset.py`) |
 
-The core pipeline (and the 2D→3D crop and STL→OBJ conversion) need **only numpy**.
-The upstream stages have optional, heavier extras:
+The legacy connector-graph core (and the 2D→3D crop and STL→OBJ conversion) need
+**only numpy**. The connection-point training pipeline additionally needs
+`scipy` + `ijson` + `torch`, and the heavier upstream/backbone stages have extras:
 
 | Extra | Install | Needed for |
 |---|---|---|
 | `dev` | `pip install -e ".[dev]"` | `pytest`, `black`, `flake8` |
 | `hpo` | `pip install -e ".[hpo]"` | Ray Tune (`hpo_ray.py`) |
 | `cad` | `pip install -e ".[cad]"` | gmsh — STEP→STL in `dataset_convert.py` (STL→OBJ works without it) |
+| **knngraph** | `pip install torch scipy` | native-Windows CP backbone (no native geometry deps) |
+| **diffusionnet** | WSL only — `bash setup_wsl.sh` | production CP backbone (`robust_laplacian`/`potpourri3d` segfault on Windows) |
 
 ---
 

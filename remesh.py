@@ -1,11 +1,4 @@
-# remesh.py: mesh subdivision, decimation, label upscaling
-#
-# Reference: Scheffler (2022), §5.1.2
-#   §5.1.2 / Abb.29,30     – simple + Loop (smooth) subdivision,
-#                             vertex-cluster decimation
-#   §5.1.2                 – scale to ~6000 vertices, Manifold/ManifoldPlus
-#                             watertight repair
-#   §5.1.2 (Skalierung)    – nearest-neighbor label transfer after remesh
+# mesh remeshing via external tools (Meshlabserver, PyMeshLab)
 
 import shutil
 import logging
@@ -15,10 +8,7 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-
-# ---------------------------------------------------------------------------
 # helper: unique edges + midpoint index per edge
-# ---------------------------------------------------------------------------
 
 def _edge_midpoints(faces, n_vertices):
     F = np.asarray(faces, dtype=int)
@@ -31,12 +21,8 @@ def _edge_midpoints(faces, n_vertices):
     inv = inv.reshape(3, len(F)).T
     return uniq, mid_index, inv
 
-
-# ---------------------------------------------------------------------------
 # simple subdivision: each triangle split into 4
-# ---------------------------------------------------------------------------
 
-# §5.1.2 / Abb.29 – simple subdivision: each triangle split into 4 by edge midpoints
 def subdivide_simple(vertices, faces, labels=None):
     """Split each triangle into 4 (edge midpoints)."""
     V = np.asarray(vertices, dtype=float)
@@ -64,12 +50,8 @@ def subdivide_simple(vertices, faces, labels=None):
     L2 = np.concatenate([L, mid_lab])
     return V2, F2, L2
 
-
-# ---------------------------------------------------------------------------
 # smooth (Loop) subdivision
-# ---------------------------------------------------------------------------
 
-# §5.1.2 / Abb.30 – Loop (smooth) subdivision with Warren weights
 def subdivide_loop(vertices, faces, labels=None):
     """Loop subdivision with smoothing. Labels propagated like subdivide_simple."""
     V = np.asarray(vertices, dtype=float)
@@ -139,12 +121,8 @@ def subdivide_loop(vertices, faces, labels=None):
     L2 = np.concatenate([L, np.where(la == lb, la, 0)])
     return V2, F2, L2
 
-
-# ---------------------------------------------------------------------------
 # downsampling via vertex clustering (voxel grid)
-# ---------------------------------------------------------------------------
 
-# §5.1.2 / Abb.29 – vertex-cluster decimation (voxel grid, majority vote labels)
 def decimate_vertex_cluster(vertices, faces, target_vertices, labels=None):
     """Decimate to ~target_vertices via voxel clustering + majority vote labels."""
     V = np.asarray(vertices, dtype=float)
@@ -197,12 +175,8 @@ def decimate_vertex_cluster(vertices, faces, target_vertices, labels=None):
     L2 = votes.argmax(axis=1)
     return V2, F2, L2
 
-
-# ---------------------------------------------------------------------------
 # label upscaling via nearest neighbor
-# ---------------------------------------------------------------------------
 
-# §5.1.2 (Skalierung) – nearest-neighbor label transfer after remesh
 def upscale_labels_nn(vertices_new, vertices_old, labels_old):
     """Assign each new vertex the label of the nearest old vertex.
 
@@ -222,12 +196,8 @@ def upscale_labels_nn(vertices_new, vertices_old, labels_old):
             out[i] = Lo[int(np.argmin(((Vo - p) ** 2).sum(axis=1)))]
         return out
 
-
-# ---------------------------------------------------------------------------
 # scale mesh to a uniform vertex count
-# ---------------------------------------------------------------------------
 
-# §5.1.2 – scale to ~6000 vertices: subdivide then decimate
 def scale_to_target(vertices, faces, labels=None, target_vertices=6000,
                     smooth=False, max_subdiv=4):
     """Bring mesh to approximately target_vertices.
@@ -252,12 +222,8 @@ def scale_to_target(vertices, faces, labels=None, target_vertices=6000,
     logger.debug("scale_to_target: -> %d vertices (%d subdivision iterations)", len(out[0]), it)
     return out
 
-
-# ---------------------------------------------------------------------------
 # watertight 2-manifold via Manifold/ManifoldPlus (external binary)
-# ---------------------------------------------------------------------------
 
-# §5.1.2 – Manifold/ManifoldPlus watertight 2-manifold repair
 def watertight_manifold(in_obj, out_obj, depth=8, plus=True):
     """Generate a watertight 2-manifold mesh (Huang et al.).
 
@@ -282,10 +248,7 @@ def watertight_manifold(in_obj, out_obj, depth=8, plus=True):
     subprocess.run(cmd, check=True)
     return out_obj
 
-
-# ---------------------------------------------------------------------------
 # self-test
-# ---------------------------------------------------------------------------
 
 def _demo():
     # flat grid plate
@@ -318,7 +281,6 @@ def _demo():
     print(f"[nn-up]  {(Lup == L1).mean() * 100:.0f}% of propagated labels match nn assignment")
 
     print("\n[ok] remesh self-test passed.")
-
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
