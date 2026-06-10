@@ -1,0 +1,34 @@
+# Python bytecode / caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments (never commit these)
+.venv/
+venv/
+env/
+ENV/
+
+# Editor / tool local settings
+.claude/
+.idea/
+.vscode/
+
+# Build / packaging artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Test / type-checker caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Stray / temporary files
+*.tmp
+file.tmp
+
+# OS cruft
+.DS_Store
+Thumbs.db
