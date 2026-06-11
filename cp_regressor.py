@@ -99,38 +99,303 @@ def build_diffusionnet_regressor(config=None):
 
 
 # ---------------------------------------------------------------------------
-# checkpointing: persist / restore a trained DiffusionNet regressor
+# checkpointing: one .ckpt format for ALL backbones, with full training state
 # ---------------------------------------------------------------------------
-# A checkpoint is {state_dict, meta}. meta carries the structural params
-# (c_in/c_width/n_block/dropout/input_features/k_eig) so load_diffusionnet can
-# rebuild the exact architecture before loading weights -- no separate config
-# needed to run inference later.
+# A checkpoint is a dict with at least {state_dict, meta, backbone}. meta
+# carries the structural params so the exact architecture can be rebuilt
+# before loading weights -- no separate config needed for inference later.
+#
+# Training checkpoints additionally carry {optimizer, scheduler, epoch,
+# best_f1, history, rng} so a run can RESUME exactly where it stopped --
+# including on a different machine: commit/push the .ckpt, pull it on the
+# other device, and run train_cp.py --resume. torch.save files are portable
+# across OS/CPU/GPU (tensors are remapped via map_location on load).
 
-def save_diffusionnet(model, meta, path):
-    """Save a trained DiffusionNet regressor (weights + meta) to `path`."""
+CKPT_VERSION = 1
+
+
+def _meta_to_config(backbone, meta):
+    """Map a checkpoint's meta back to the builder config for that backbone."""
+    if backbone == "diffusionnet":
+        return {"input_features": meta["input_features"], "c_width": meta["c_width"],
+                "n_diffusion_blocks": meta["n_block"], "n_eig": meta["k_eig"],
+                "dropout": meta.get("dropout", 0.0)}
+    if backbone == "knngraph":
+        return {"c_width": meta["c_width"], "n_layers": meta["n_layers"],
+                "k": meta["k"]}
+    if backbone == "mlp":
+        return {"width": meta.get("width", 128), "depth": meta.get("depth", 4)}
+    raise ValueError(f"unknown backbone {backbone!r}")
+
+
+def build_regressor(backbone, config=None):
+    """Build any of the three backbones. Returns (model, meta)."""
+    if backbone == "diffusionnet":
+        return build_diffusionnet_regressor(config)
+    if backbone == "knngraph":
+        return build_knngraph_regressor(config)
+    if backbone == "mlp":
+        cfg = {"width": 128, "depth": 4, **(config or {})}
+        model = build_cpmlp(width=int(cfg["width"]), depth=int(cfg["depth"]))
+        meta = {"backbone": "mlp", "input_features": "xyz", "c_in": 3,
+                "width": int(cfg["width"]), "depth": int(cfg["depth"])}
+        return model, meta
+    raise ValueError(f"unknown backbone {backbone!r}")
+
+
+def _capture_rng():
+    """Snapshot python/numpy/torch(/cuda) RNG states for exact resume."""
+    torch = _require_torch()
+    import random
+    st = {"python": random.getstate(), "numpy": np.random.get_state(),
+          "torch": torch.get_rng_state()}
+    if torch.cuda.is_available():
+        st["cuda"] = torch.cuda.get_rng_state_all()
+    return st
+
+
+def _restore_rng(st):
+    """Best-effort RNG restore (a resume on different hardware still works --
+    it just reshuffles from the seed instead of the exact saved stream)."""
+    if not st:
+        return
+    torch = _require_torch()
+    import random
+    try:
+        random.setstate(st["python"])
+        np.random.set_state(st["numpy"])
+        torch.set_rng_state(st["torch"].cpu().to(torch.uint8))
+        cuda = st.get("cuda")
+        if cuda and torch.cuda.is_available() and len(cuda) == torch.cuda.device_count():
+            torch.cuda.set_rng_state_all([t.cpu().to(torch.uint8) for t in cuda])
+    except Exception as exc:                           # noqa: BLE001
+        logger.warning("could not restore RNG state (%s) -- continuing", exc)
+
+
+def save_checkpoint(path, model, meta, backbone, optimizer=None, scheduler=None,
+                    epoch=None, best_f1=None, history=None):
+    """Write a (resumable) checkpoint atomically.
+
+    With only model+meta this is an inference checkpoint (what the legacy
+    save_diffusionnet/save_knngraph wrote); passing optimizer/scheduler/epoch
+    makes it a full training checkpoint that train loops can resume from.
+    `epoch` is the last COMPLETED epoch (0-based). Atomic write (tmp+replace)
+    so a crash mid-save never corrupts an existing checkpoint.
+    """
     torch = _require_torch()
     import os
     d = os.path.dirname(os.path.abspath(path))
     if d:
         os.makedirs(d, exist_ok=True)
-    torch.save({"state_dict": model.state_dict(), "meta": meta}, path)
-    logger.info("saved DiffusionNet checkpoint -> %s", path)
+    ckpt = {"ckpt_version": CKPT_VERSION, "backbone": backbone,
+            "state_dict": model.state_dict(), "meta": meta}
+    if optimizer is not None:
+        ckpt["optimizer"] = optimizer.state_dict()
+    if scheduler is not None:
+        ckpt["scheduler"] = scheduler.state_dict()
+    if epoch is not None:
+        ckpt["epoch"] = int(epoch)
+        ckpt["rng"] = _capture_rng()
+    if best_f1 is not None:
+        ckpt["best_f1"] = float(best_f1)
+    if history is not None:
+        ckpt["history"] = list(history)
+    tmp = path + ".tmp"
+    torch.save(ckpt, tmp)
+    os.replace(tmp, path)
+    logger.info("saved %s checkpoint -> %s%s", backbone, path,
+                f" (epoch {epoch})" if epoch is not None else "")
+
+
+def load_checkpoint(path, device="cpu"):
+    """Load a checkpoint dict (any backbone, training or inference-only)."""
+    torch = _require_torch()
+    ckpt = torch.load(path, map_location=device, weights_only=False)
+    if "state_dict" not in ckpt or "meta" not in ckpt:
+        raise ValueError(f"{path} is not a cp_regressor checkpoint")
+    return ckpt
+
+
+def load_model(path, device="cpu"):
+    """Rebuild a trained regressor from any checkpoint for inference.
+
+    Works for all backbones and both old ({state_dict, meta}) and new
+    full-training checkpoints. Returns (model, meta, backbone); model is on
+    `device` and in eval mode.
+    """
+    ckpt = load_checkpoint(path, device=device)
+    backbone = ckpt.get("backbone") or ckpt["meta"].get("backbone", "diffusionnet")
+    model, _ = build_regressor(backbone, _meta_to_config(backbone, ckpt["meta"]))
+    model.load_state_dict(ckpt["state_dict"])
+    model = model.to(device)
+    model.eval()
+    logger.info("loaded %s checkpoint <- %s", backbone, path)
+    return model, ckpt["meta"], backbone
+
+
+# Backward-compatible wrappers (the readme and older scripts reference these).
+
+def save_diffusionnet(model, meta, path):
+    """Save a trained DiffusionNet regressor (weights + meta) to `path`."""
+    save_checkpoint(path, model, meta, "diffusionnet")
 
 
 def load_diffusionnet(path, device="cpu"):
     """Rebuild a DiffusionNet regressor from a checkpoint. Returns (model, meta)."""
-    torch = _require_torch()
-    ckpt = torch.load(path, map_location=device, weights_only=False)
-    meta = ckpt["meta"]
-    cfg = {"input_features": meta["input_features"], "c_width": meta["c_width"],
-           "n_diffusion_blocks": meta["n_block"], "n_eig": meta["k_eig"],
-           "dropout": meta.get("dropout", 0.0)}
-    model, _ = build_diffusionnet_regressor(cfg)
-    model.load_state_dict(ckpt["state_dict"])
-    model = model.to(device)
-    model.eval()
-    logger.info("loaded DiffusionNet checkpoint <- %s", path)
+    model, meta, _ = load_model(path, device=device)
     return model, meta
+
+
+# ---------------------------------------------------------------------------
+# shared training plumbing: setup/resume + per-epoch bookkeeping
+# ---------------------------------------------------------------------------
+
+def _init_training(backbone, config, resume_from, device, lr,
+                   lr_decay_every, lr_decay_rate, seed):
+    """Common setup for every train loop: seed the RNGs, build the model and
+    optimizer/scheduler -- or restore all of them from `resume_from` (a path or
+    a pre-loaded checkpoint dict) so training continues exactly where it
+    stopped. Returns (model, meta, opt, sched, start_epoch, best_f1, history).
+    """
+    import random
+    torch = _require_torch()
+    random.seed(seed); np.random.seed(seed); torch.manual_seed(seed)
+
+    state = None
+    if resume_from:
+        state = (load_checkpoint(resume_from, device=device)
+                 if isinstance(resume_from, str) else resume_from)
+        ck_backbone = state.get("backbone") or state["meta"].get("backbone",
+                                                                 "diffusionnet")
+        if ck_backbone != backbone:
+            raise ValueError(f"checkpoint is for backbone {ck_backbone!r}, "
+                             f"but --backbone {backbone!r} was requested")
+        # rebuild the EXACT architecture from the checkpoint meta, not from
+        # the (possibly different) fresh config
+        model, _ = build_regressor(backbone, _meta_to_config(backbone, state["meta"]))
+        meta = state["meta"]
+    else:
+        model, meta = build_regressor(backbone, config)
+
+    model = model.to(device)
+    if state is not None:
+        model.load_state_dict(state["state_dict"])
+    opt = torch.optim.Adam(model.parameters(), lr=lr)
+    sched = (torch.optim.lr_scheduler.StepLR(opt, step_size=int(lr_decay_every),
+                                             gamma=float(lr_decay_rate))
+             if lr_decay_every and lr_decay_every > 0 else None)
+
+    start_epoch, best_f1, history = 0, -1.0, []
+    if state is not None:
+        if state.get("optimizer"):
+            opt.load_state_dict(state["optimizer"])     # state tensors are
+        if sched is not None and state.get("scheduler"):  # remapped to the
+            sched.load_state_dict(state["scheduler"])     # params' device
+        start_epoch = int(state.get("epoch", -1)) + 1
+        best_f1 = float(state.get("best_f1", -1.0))
+        history = list(state.get("history") or [])
+        _restore_rng(state.get("rng"))
+        logger.info("resumed %s checkpoint (next epoch %d, best val F1=%.4f)",
+                    backbone, start_epoch, best_f1)
+    return model, meta, opt, sched, start_epoch, best_f1, history
+
+
+class _Bookkeeper:
+    """Per-epoch bookkeeping shared by all backbones: log the train loss, run
+    validation metrics every `eval_every` epochs (accuracy / precision /
+    recall / F1 / localisation / angular error), keep the best-by-val-F1 full
+    checkpoint at `best_path`, roll a resumable `last` checkpoint at
+    `last_path` every `save_every` epochs, persist the metric history to
+    `history_path` (JSON), and early-stop after `patience` stale evals."""
+
+    def __init__(self, model, meta, backbone, opt, sched, epochs, *,
+                 metrics_fn=None, eval_every=5, patience=0,
+                 best_path=None, last_path=None, save_every=1,
+                 history_path=None, log_every=1, best_f1=-1.0, history=None):
+        self.model, self.meta, self.backbone = model, meta, backbone
+        self.opt, self.sched, self.epochs = opt, sched, epochs
+        self.metrics_fn, self.eval_every = metrics_fn, max(1, int(eval_every))
+        self.patience = int(patience)
+        self.best_path, self.last_path = best_path, last_path
+        self.save_every = int(save_every)
+        self.history_path, self.log_every = history_path, log_every
+        self.best_f1 = float(best_f1)
+        self.history = history if history is not None else []
+        self.stale = 0
+        self.saved_best = False
+        self.had_valid_eval = False
+        self.last_epoch_done = -1
+
+    def _save(self, path, epoch):
+        save_checkpoint(path, self.model, self.meta, self.backbone,
+                        optimizer=self.opt, scheduler=self.sched, epoch=epoch,
+                        best_f1=self.best_f1, history=self.history)
+
+    def flush_history(self):
+        if not self.history_path:
+            return
+        import json as _json
+        import math
+        import os
+        d = os.path.dirname(os.path.abspath(self.history_path))
+        if d:
+            os.makedirs(d, exist_ok=True)
+        # NaN (e.g. loc/ang error with zero matches) is not valid strict JSON
+        clean = [{k: (None if isinstance(v, float) and not math.isfinite(v) else v)
+                  for k, v in rec.items()} for rec in self.history]
+        with open(self.history_path, "w", encoding="utf-8") as fh:
+            _json.dump(clean, fh, indent=2)
+
+    def after_epoch(self, ep, mean_loss):
+        """End-of-epoch hook. Returns True when training should stop early."""
+        self.last_epoch_done = ep
+        if self.log_every and (ep % self.log_every == 0 or ep == self.epochs - 1):
+            logger.info("epoch %3d/%d  train loss=%.5f", ep, self.epochs, mean_loss)
+
+        stop = False
+        if self.metrics_fn is not None and (ep % self.eval_every == 0
+                                            or ep == self.epochs - 1):
+            m = self.metrics_fn(self.model, self.meta) or {}
+            rec = {"epoch": ep, "train_loss": float(mean_loss)}
+            rec.update({"val_" + k: v for k, v in m.items()})
+            self.history.append(rec)
+            nan = float("nan")
+            f1 = m.get("f1", nan)
+            logger.info("  epoch %d  VAL  accuracy=%.3f  precision=%.3f  "
+                        "recall=%.3f  F1=%.3f  loc=%.2f mm  ang=%.1f deg",
+                        ep, m.get("accuracy", nan), m.get("precision", nan),
+                        m.get("recall", nan), f1,
+                        m.get("mean_loc_err_mm", nan), m.get("mean_ang_err_deg", nan))
+            if isinstance(f1, float) and not np.isnan(f1):
+                self.had_valid_eval = True
+                if f1 > self.best_f1:
+                    self.best_f1, self.stale = float(f1), 0
+                    if self.best_path:
+                        self._save(self.best_path, ep)
+                        self.saved_best = True
+                        logger.info("  new best val F1=%.4f -> %s", f1, self.best_path)
+                else:
+                    self.stale += 1
+                    logger.info("  no F1 improvement for %d eval(s) (best=%.4f)",
+                                self.stale, self.best_f1)
+                stop = bool(self.patience) and self.stale >= self.patience
+            self.flush_history()
+
+        if self.last_path and ((self.save_every > 0 and (ep + 1) % self.save_every == 0)
+                               or ep == self.epochs - 1 or stop):
+            self._save(self.last_path, ep)
+        return stop
+
+    def finalize(self):
+        """After the loop: make sure a best checkpoint exists even without a
+        validation set (no metrics_fn) and the history file is written. When
+        valid evals DID happen but none beat the resumed best_f1, the existing
+        best checkpoint is deliberately left untouched -- the final model is
+        worse than the historical best."""
+        if (self.best_path and not self.saved_best and not self.had_valid_eval
+                and self.last_epoch_done >= 0):
+            self._save(self.best_path, self.last_epoch_done)
+        self.flush_history()
 
 
 # ---------------------------------------------------------------------------
@@ -203,15 +468,24 @@ def pred_to_array(pred, offset_scale=1.0):
 # ---------------------------------------------------------------------------
 
 def train_cpmlp(samples, epochs=300, lr=1e-3, width=128, depth=4,
-                device="cpu", log_every=50):
+                device="cpu", log_every=50, metrics_fn=None, eval_every=10,
+                patience=0, best_path=None, last_path=None, save_every=1,
+                history_path=None, resume_from=None, seed=0):
     """Overfit/smoke train the MLP backbone on prepared samples.
 
     samples: list of {'verts_norm' (N,3), 'target' (N,7), 'mask' (N,), 'scale'}.
-    Returns the trained model.
+    Supports the same per-epoch val metrics + best/last full-state .ckpt +
+    resume machinery as the graph backbones (see train_diffusionnet_regressor
+    for the parameter docs). Returns the trained model.
     """
     torch = _require_torch()
-    model = build_cpmlp(width=width, depth=depth).to(device)
-    opt = torch.optim.Adam(model.parameters(), lr=lr)
+    model, meta, opt, _, start_epoch, best_f1, history = _init_training(
+        "mlp", {"width": width, "depth": depth}, resume_from, device, lr,
+        0, 0.5, seed)
+    if start_epoch >= epochs:
+        logger.info("checkpoint already at epoch %d >= --epochs %d; nothing to "
+                    "train (raise --epochs to continue)", start_epoch, epochs)
+        return model
     tensors = []
     for s in samples:
         tensors.append({
@@ -220,18 +494,31 @@ def train_cpmlp(samples, epochs=300, lr=1e-3, width=128, depth=4,
             "m": torch.tensor(s["mask"], dtype=torch.bool, device=device),
             "scale": float(s["scale"]),
         })
-    for ep in range(epochs):
-        model.train()
-        tot = 0.0
-        for s in tensors:
-            opt.zero_grad(set_to_none=True)
-            out = model(s["x"])
-            loss, parts = cp_loss(out, s["t"], s["m"])
-            loss.backward()
-            opt.step()
-            tot += parts["total"]
-        if log_every and (ep % log_every == 0 or ep == epochs - 1):
-            logger.info("epoch %3d  loss=%.5f", ep, tot / max(1, len(tensors)))
+    bk = _Bookkeeper(model, meta, "mlp", opt, None, epochs,
+                     metrics_fn=metrics_fn, eval_every=eval_every,
+                     patience=patience, best_path=best_path, last_path=last_path,
+                     save_every=save_every, history_path=history_path,
+                     log_every=log_every, best_f1=best_f1, history=history)
+    try:
+        for ep in range(start_epoch, epochs):
+            model.train()
+            tot = 0.0
+            for s in tensors:
+                opt.zero_grad(set_to_none=True)
+                out = model(s["x"])
+                loss, parts = cp_loss(out, s["t"], s["m"])
+                loss.backward()
+                opt.step()
+                tot += parts["total"]
+            if bk.after_epoch(ep, tot / max(1, len(tensors))):
+                logger.info("early stopping at epoch %d", ep)
+                break
+    except KeyboardInterrupt:
+        bk.flush_history()
+        logger.warning("training interrupted -- resume from the last checkpoint%s",
+                       f" ({last_path})" if last_path else "")
+        raise
+    bk.finalize()
     return model
 
 
@@ -296,11 +583,12 @@ def _to_device_ops(ops, device):
 
 def train_diffusionnet_regressor(train_samples, config=None, epochs=200, lr=1e-3,
                                  device="cpu", op_cache_dir=None, log_every=1,
-                                 eval_fn=None, eval_every=5,
+                                 metrics_fn=None, eval_every=5, patience=0,
                                  w_heat=1.0, w_off=1.0, w_dir=1.0,
                                  heat_pos_weight=50.0, heat_loss="bce",
                                  focal_gamma=2.0, max_gpu_verts=60000,
-                                 ckpt_path=None, ckpt_every=0, seed=0,
+                                 best_path=None, last_path=None, save_every=1,
+                                 history_path=None, resume_from=None, seed=0,
                                  lr_decay_every=0, lr_decay_rate=0.5,
                                  accum_steps=1, low_memory=False):
     """Train the production DiffusionNet regressor (C_out=7).
@@ -312,12 +600,19 @@ def train_diffusionnet_regressor(train_samples, config=None, epochs=200, lr=1e-3
     seed                 : seeds torch/np/random for reproducible runs (#4).
     lr_decay_every/rate  : StepLR schedule (epochs / gamma); 0 disables it (#4).
     accum_steps          : gradient accumulation over N parts before opt.step.
-    eval_fn(model,meta,ep): optional callback run every `eval_every` epochs; if it
-                           returns a truthy value training stops early (#5). It is
-                           expected to own best-by-metric checkpointing.
-    ckpt_path/ckpt_every : crash-resilience snapshot of the *latest* weights to
-                           "<ckpt_path>.latest" every N epochs; the final/best at
-                           ckpt_path is written here only when no eval_fn drives it.
+    metrics_fn(model,meta): optional; runs every `eval_every` epochs and returns
+                           the val metric dict (accuracy/precision/recall/f1/
+                           loc/ang). Drives best-by-F1 checkpointing to
+                           `best_path` and early stopping after `patience`
+                           stale evals.
+    best_path/last_path  : full-state .ckpt files -- best-by-val-F1 and a rolling
+                           resumable snapshot (every `save_every` epochs and at
+                           the end). Both contain model+optimizer+scheduler+
+                           epoch+RNG+history, so EITHER can be resumed from.
+    history_path         : per-eval metric history as JSON (plot/inspect later).
+    resume_from          : path (or loaded dict) of a previous .ckpt; training
+                           continues at its next epoch toward `epochs` total --
+                           works across machines (commit the .ckpt, pull, resume).
     max_gpu_verts        : parts above this run on CPU (4 GB GPU OOMs on big
                            meshes); grads from the temp CPU copy are added back to
                            the GPU optimiser, identical to a GPU step.
@@ -325,20 +620,16 @@ def train_diffusionnet_regressor(train_samples, config=None, epochs=200, lr=1e-3
                            from op_cache_dir each step (bounded RAM for corpora
                            larger than memory, at the cost of cache I/O) (#7).
     """
-    import random
     import copy
     torch = _require_torch()
     import diffusionnet as dnmod
-    # #4: reproducibility -- the data split was already seeded; seed the optimiser/
-    # shuffle/dropout too so runs are comparable.
-    random.seed(seed); np.random.seed(seed); torch.manual_seed(seed)
-
-    model, meta = build_diffusionnet_regressor(config)
-    model = model.to(device)
-    opt = torch.optim.Adam(model.parameters(), lr=lr)
-    sched = (torch.optim.lr_scheduler.StepLR(opt, step_size=int(lr_decay_every),
-                                             gamma=float(lr_decay_rate))
-             if lr_decay_every and lr_decay_every > 0 else None)
+    model, meta, opt, sched, start_epoch, best_f1, history = _init_training(
+        "diffusionnet", config, resume_from, device, lr,
+        lr_decay_every, lr_decay_rate, seed)
+    if start_epoch >= epochs:
+        logger.info("checkpoint already at epoch %d >= --epochs %d; nothing to "
+                    "train (raise --epochs to continue)", start_epoch, epochs)
+        return model, meta
     accum = max(1, int(accum_steps))
 
     def _accumulate(ops, d, run_device, src_device, loss_div):
@@ -400,46 +691,50 @@ def train_diffusionnet_regressor(train_samples, config=None, epochs=200, lr=1e-3
     if not prepared:
         raise RuntimeError("no usable parts after operator precompute")
 
+    import random
+    bk = _Bookkeeper(model, meta, "diffusionnet", opt, sched, epochs,
+                     metrics_fn=metrics_fn, eval_every=eval_every,
+                     patience=patience, best_path=best_path, last_path=last_path,
+                     save_every=save_every, history_path=history_path,
+                     log_every=log_every, best_f1=best_f1, history=history)
     order = list(range(len(prepared)))
-    for ep in range(epochs):
-        model.train()
-        random.shuffle(order)
-        opt.zero_grad(set_to_none=True)
-        tot = 0.0
-        for k, i in enumerate(order, 1):
-            d = prepared[i]
-            ops = (_cp_operators(d["verts"], d["faces"], meta["k_eig"], op_cache_dir)
-                   if low_memory else d["ops"])
-            n = d["x"].shape[0]
-            big = device != "cpu" and max_gpu_verts and n > max_gpu_verts
-            try:
-                parts = _accumulate(ops, d, "cpu" if big else device, device, accum)
-            except (torch.cuda.OutOfMemoryError, RuntimeError) as exc:
-                if "out of memory" not in str(exc).lower():
-                    raise
-                torch.cuda.empty_cache()
-                logger.warning("CUDA OOM on %d-vertex part -> CPU fallback", n)
-                parts = _accumulate(ops, d, "cpu", device, accum)
-            if low_memory:
-                del ops
-            if k % accum == 0 or k == len(order):
-                opt.step()
-                opt.zero_grad(set_to_none=True)
-            tot += parts["total"]
-        if sched is not None:
-            sched.step()
-        if log_every and (ep % log_every == 0 or ep == epochs - 1):
-            logger.info("epoch %3d  loss=%.5f", ep, tot / max(1, len(prepared)))
-        if eval_fn is not None and (ep % eval_every == 0 or ep == epochs - 1):
-            if eval_fn(model, meta, ep):               # truthy -> early stop (#5)
+    try:
+        for ep in range(start_epoch, epochs):
+            model.train()
+            random.shuffle(order)
+            opt.zero_grad(set_to_none=True)
+            tot = 0.0
+            for k, i in enumerate(order, 1):
+                d = prepared[i]
+                ops = (_cp_operators(d["verts"], d["faces"], meta["k_eig"], op_cache_dir)
+                       if low_memory else d["ops"])
+                n = d["x"].shape[0]
+                big = device != "cpu" and max_gpu_verts and n > max_gpu_verts
+                try:
+                    parts = _accumulate(ops, d, "cpu" if big else device, device, accum)
+                except (torch.cuda.OutOfMemoryError, RuntimeError) as exc:
+                    if "out of memory" not in str(exc).lower():
+                        raise
+                    torch.cuda.empty_cache()
+                    logger.warning("CUDA OOM on %d-vertex part -> CPU fallback", n)
+                    parts = _accumulate(ops, d, "cpu", device, accum)
+                if low_memory:
+                    del ops
+                if k % accum == 0 or k == len(order):
+                    opt.step()
+                    opt.zero_grad(set_to_none=True)
+                tot += parts["total"]
+            if sched is not None:
+                sched.step()
+            if bk.after_epoch(ep, tot / max(1, len(prepared))):
                 logger.info("early stopping at epoch %d", ep)
                 break
-        # crash-resilience snapshot of the latest weights (separate from best)
-        if ckpt_path and ckpt_every and ep % ckpt_every == 0 and ep > 0:
-            save_diffusionnet(model, meta, ckpt_path + ".latest")
-    # if no eval_fn is driving best-checkpointing, persist the final weights
-    if ckpt_path and eval_fn is None:
-        save_diffusionnet(model, meta, ckpt_path)
+    except KeyboardInterrupt:
+        bk.flush_history()
+        logger.warning("training interrupted -- resume from the last checkpoint%s",
+                       f" ({last_path})" if last_path else "")
+        raise
+    bk.finalize()
     return model, meta
 
 
@@ -504,7 +799,7 @@ def _knn_graph(verts, k=16):
     to N-1 for tiny meshes. Needs no mesh faces (works on point clouds too).
     """
     torch = _require_torch()
-    from scipy.spatial import cKDTree
+    from scipy.spatial import cKDTree  # type: ignore[attr-defined]
     V = np.asarray(verts, dtype=np.float64)
     n = len(V)
     kq = int(min(k + 1, n))                  # +1: query returns the point itself
@@ -557,49 +852,38 @@ def build_knngraph_regressor(config=None):
 
 def save_knngraph(model, meta, path):
     """Save a trained kNN-graph regressor (weights + meta) to `path`."""
-    torch = _require_torch()
-    import os
-    d = os.path.dirname(os.path.abspath(path))
-    if d:
-        os.makedirs(d, exist_ok=True)
-    torch.save({"state_dict": model.state_dict(), "meta": meta}, path)
-    logger.info("saved kNN-graph checkpoint -> %s", path)
+    save_checkpoint(path, model, meta, "knngraph")
 
 
 def load_knngraph(path, device="cpu"):
     """Rebuild a kNN-graph regressor from a checkpoint. Returns (model, meta)."""
-    torch = _require_torch()
-    ckpt = torch.load(path, map_location=device, weights_only=False)
-    meta = ckpt["meta"]
-    model, _ = build_knngraph_regressor(
-        {"c_width": meta["c_width"], "n_layers": meta["n_layers"], "k": meta["k"]})
-    model.load_state_dict(ckpt["state_dict"])
-    model = model.to(device); model.eval()
-    logger.info("loaded kNN-graph checkpoint <- %s", path)
+    model, meta, _ = load_model(path, device=device)
     return model, meta
 
 
 def train_knngraph_regressor(train_samples, config=None, epochs=200, lr=1e-3,
-                             device="cpu", log_every=1, eval_fn=None, eval_every=5,
+                             device="cpu", log_every=1, metrics_fn=None,
+                             eval_every=5, patience=0,
                              w_heat=1.0, w_off=1.0, w_dir=1.0, heat_pos_weight=50.0,
                              heat_loss="bce", focal_gamma=2.0, max_gpu_verts=60000,
-                             ckpt_path=None, ckpt_every=0, seed=0,
+                             best_path=None, last_path=None, save_every=1,
+                             history_path=None, resume_from=None, seed=0,
                              lr_decay_every=0, lr_decay_rate=0.5, accum_steps=1):
     """Train the kNN-graph regressor. Mirrors train_diffusionnet_regressor (seed,
-    StepLR, gradient accumulation, GPU/CPU-hybrid for big meshes, eval_fn early
-    stop, best/latest checkpoints) but the per-part operator is a cheap kNN graph
-    held in RAM (no eigenbasis, no op cache). Returns (model, meta)."""
-    import random
+    StepLR, gradient accumulation, GPU/CPU-hybrid for big meshes, per-epoch val
+    metrics, best/last full-state .ckpt + resume, early stop) but the per-part
+    operator is a cheap kNN graph held in RAM (no eigenbasis, no op cache).
+    Returns (model, meta). See train_diffusionnet_regressor for the checkpoint/
+    resume parameter docs."""
     import copy
     torch = _require_torch()
-    random.seed(seed); np.random.seed(seed); torch.manual_seed(seed)
-
-    model, meta = build_knngraph_regressor(config)
-    model = model.to(device)
-    opt = torch.optim.Adam(model.parameters(), lr=lr)
-    sched = (torch.optim.lr_scheduler.StepLR(opt, step_size=int(lr_decay_every),
-                                             gamma=float(lr_decay_rate))
-             if lr_decay_every and lr_decay_every > 0 else None)
+    model, meta, opt, sched, start_epoch, best_f1, history = _init_training(
+        "knngraph", config, resume_from, device, lr,
+        lr_decay_every, lr_decay_rate, seed)
+    if start_epoch >= epochs:
+        logger.info("checkpoint already at epoch %d >= --epochs %d; nothing to "
+                    "train (raise --epochs to continue)", start_epoch, epochs)
+        return model, meta
     accum = max(1, int(accum_steps))
 
     def _accumulate(d, run_device, src_device, loss_div):
@@ -645,40 +929,46 @@ def train_knngraph_regressor(train_samples, config=None, epochs=200, lr=1e-3,
     if not prepared:
         raise RuntimeError("no usable parts for kNN-graph training")
 
+    import random
+    bk = _Bookkeeper(model, meta, "knngraph", opt, sched, epochs,
+                     metrics_fn=metrics_fn, eval_every=eval_every,
+                     patience=patience, best_path=best_path, last_path=last_path,
+                     save_every=save_every, history_path=history_path,
+                     log_every=log_every, best_f1=best_f1, history=history)
     order = list(range(len(prepared)))
-    for ep in range(epochs):
-        model.train()
-        random.shuffle(order)
-        opt.zero_grad(set_to_none=True)
-        tot = 0.0
-        for k, i in enumerate(order, 1):
-            d = prepared[i]
-            n = d["x"].shape[0]
-            big = device != "cpu" and max_gpu_verts and n > max_gpu_verts
-            try:
-                parts = _accumulate(d, "cpu" if big else device, device, accum)
-            except (torch.cuda.OutOfMemoryError, RuntimeError) as exc:
-                if "out of memory" not in str(exc).lower():
-                    raise
-                torch.cuda.empty_cache()
-                logger.warning("CUDA OOM on %d-vertex part -> CPU fallback", n)
-                parts = _accumulate(d, "cpu", device, accum)
-            if k % accum == 0 or k == len(order):
-                opt.step()
-                opt.zero_grad(set_to_none=True)
-            tot += parts["total"]
-        if sched is not None:
-            sched.step()
-        if log_every and (ep % log_every == 0 or ep == epochs - 1):
-            logger.info("epoch %3d  loss=%.5f", ep, tot / max(1, len(prepared)))
-        if eval_fn is not None and (ep % eval_every == 0 or ep == epochs - 1):
-            if eval_fn(model, meta, ep):
+    try:
+        for ep in range(start_epoch, epochs):
+            model.train()
+            random.shuffle(order)
+            opt.zero_grad(set_to_none=True)
+            tot = 0.0
+            for k, i in enumerate(order, 1):
+                d = prepared[i]
+                n = d["x"].shape[0]
+                big = device != "cpu" and max_gpu_verts and n > max_gpu_verts
+                try:
+                    parts = _accumulate(d, "cpu" if big else device, device, accum)
+                except (torch.cuda.OutOfMemoryError, RuntimeError) as exc:
+                    if "out of memory" not in str(exc).lower():
+                        raise
+                    torch.cuda.empty_cache()
+                    logger.warning("CUDA OOM on %d-vertex part -> CPU fallback", n)
+                    parts = _accumulate(d, "cpu", device, accum)
+                if k % accum == 0 or k == len(order):
+                    opt.step()
+                    opt.zero_grad(set_to_none=True)
+                tot += parts["total"]
+            if sched is not None:
+                sched.step()
+            if bk.after_epoch(ep, tot / max(1, len(prepared))):
                 logger.info("early stopping at epoch %d", ep)
                 break
-        if ckpt_path and ckpt_every and ep % ckpt_every == 0 and ep > 0:
-            save_knngraph(model, meta, ckpt_path + ".latest")
-    if ckpt_path and eval_fn is None:
-        save_knngraph(model, meta, ckpt_path)
+    except KeyboardInterrupt:
+        bk.flush_history()
+        logger.warning("training interrupted -- resume from the last checkpoint%s",
+                       f" ({last_path})" if last_path else "")
+        raise
+    bk.finalize()
     return model, meta
 
 

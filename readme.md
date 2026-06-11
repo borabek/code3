@@ -365,9 +365,9 @@ python run_on_file.py part.off part.labels --gap-frac 0.08 --angle-max 25
 | `demo_projection.py` | End-to-end demo of the 2D→3D crop feeding the connector pipeline |
 | `json_dataset.py` | **Streaming loader** for the ABB JSON corpus (big array *or* a directory of per-part files); dedups coincident CPs into terminal-block locations; rejects non-finite coords + drops degenerate faces |
 | `cp_targets.py` | Per-vertex target **encode** (heatmap+offset+direction) / **decode** (threshold→NMS→exact point, `min_votes`) + robot-ready JSON exporter |
-| `cp_regressor.py` | 7-channel regression head with **three backbones** — `diffusionnet` (production, WSL), `knngraph` (EdgeConv, native-Windows, no native deps), `mlp` (smoke); combined loss (BCE/focal), GPU/CPU-hybrid training, best/latest checkpoints |
-| `metrics_cp.py` | Keypoint metrics: localisation (mm), angular (deg), precision/recall/F1 |
-| `train_cp.py` | CLI tying loader+targets+regressor+metrics; deterministic split, best-by-F1 checkpoint, early stop, LR schedule, op-cache, GPU OOM fallback |
+| `cp_regressor.py` | 7-channel regression head with **three backbones** — `diffusionnet` (production, WSL), `knngraph` (EdgeConv, native-Windows, no native deps), `mlp` (smoke); combined loss (BCE/focal), GPU/CPU-hybrid training, **full-state .ckpt (model+optimizer+epoch+RNG) with cross-machine resume** |
+| `metrics_cp.py` | Keypoint metrics: localisation (mm), angular (deg), accuracy/precision/recall/F1 |
+| `train_cp.py` | CLI tying loader+targets+regressor+metrics; deterministic split, per-epoch val metrics (accuracy/P/R/F1/loc/ang), best-by-F1 + resumable checkpoints (`--resume`), early stop, LR schedule, op-cache, GPU OOM fallback |
 | `make_samples.py` | Generate valid synthetic ABB-format parts (triangulated plates + CPs) for smoke-testing the backbones |
 | `run_full.py` | Thin wrapper: full-corpus DiffusionNet run with the known-good flags baked in (forwards to `train_cp.main`) |
 | `run_selftests.py` | Single runner for every module's `_selftest()` (CI-friendly) |
@@ -403,17 +403,59 @@ unlike `mlp`.
 # production backbone (DiffusionNet, WSL + GPU); cache the eigenbasis per part
 # (the expensive step) so it is built once and reused across epochs/runs:
 python train_cp.py /path/to/abb_corpus --backbone diffusionnet --device cuda \
-    --op-cache-dir /path/to/op_cache --epochs 200 \
-    --eval-every 10 --patience 6 --ckpt cp_model.pt --out results.json
+    --op-cache-dir ./op_cache --epochs 200 \
+    --eval-every 10 --patience 6 --out results.json
 
 # native-Windows backbone (no WSL, CPU): torch + scipy only
 python train_cp.py /path/to/abb_corpus --backbone knngraph --device cpu \
-    --epochs 200 --ckpt cp_model.pt --out results.json
+    --epochs 200 --out results.json
 
-# reload a trained model later (no retraining):
-#   cp_regressor.load_diffusionnet("cp_model.pt")   # diffusionnet
-#   cp_regressor.load_knngraph("cp_model.pt")       # knngraph
+# checkpoints are written automatically to checkpoints/ (git-tracked):
+#   checkpoints/cp_<backbone>_best.ckpt     best epoch by validation F1
+#   checkpoints/cp_<backbone>_last.ckpt     rolling resume point (every epoch)
+#   checkpoints/cp_<backbone>_history.json  per-eval metric history
+#
+# reload a trained model later (no retraining), any backbone:
+#   cp_regressor.load_model("checkpoints/cp_knngraph_best.ckpt")
+#   (load_diffusionnet / load_knngraph still work as before)
 ```
+
+During training, every `--eval-every` epochs the validation metrics are logged:
+
+```
+epoch  40/200  train loss=0.01913
+  epoch 40  VAL  accuracy=0.781  precision=0.892  recall=0.861  F1=0.876  loc=1.42 mm  ang=6.3 deg
+  new best val F1=0.8765 -> checkpoints/cp_knngraph_best.ckpt
+```
+
+and the run ends with a TRAIN/VAL summary (accuracy, precision, recall, F1 —
+both per-part mean and pooled over all ground-truth points — plus localisation
+and angular error).
+
+### Checkpoints & resuming — also across machines
+
+Every `.ckpt` carries the **full training state**: model weights, optimizer,
+LR scheduler, epoch counter, RNG states and the metric history. That means
+training can stop (Ctrl-C, crash, end of run) and continue later *exactly*
+where it left off — on the same machine or a different one:
+
+```bash
+# machine A: train for a while, then publish the checkpoint
+python train_cp.py ./abb_corpus --backbone knngraph --epochs 100
+git add checkpoints && git commit -m "training checkpoint" && git push
+
+# machine B (after git clone / git pull): continue toward a higher target
+python train_cp.py ./abb_corpus --backbone knngraph --resume --epochs 200
+```
+
+`--epochs` is the **total** target: resuming a 100-epoch checkpoint with
+`--epochs 200` trains 100 more. `--resume` picks `_last.ckpt` (falls back to
+`_best.ckpt`); `--resume-from path.ckpt` resumes from an explicit file. The
+checkpoint files are small (a few MB) and `torch.save` files are portable
+across OS and CPU/GPU, so committing them to git is the whole sync story —
+note the corpus itself is *not* in git, so point the positional `source` at
+wherever the JSON data lives on each machine (the train/val split is
+hash-based and identical everywhere).
 
 > On Windows you can also invoke via the `-c "import sys; sys.path.insert(0,'.'); import train_cp; train_cp.main()"`
 > form if sibling imports misbehave, but running `python train_cp.py ...` from the
@@ -425,9 +467,12 @@ python train_cp.py /path/to/abb_corpus --backbone knngraph --device cpu \
 |---|---|---|
 | `--device` | `cpu` | `cuda` to use the GPU |
 | `--op-cache-dir` | – | cache the DiffusionNet eigenbasis per part (one `.npz`/part; reused across runs) |
-| `--ckpt` / `--ckpt-every` | – / 0 | save the **best-by-val-F1** model; `<ckpt>.latest` is a periodic crash snapshot |
+| `--ckpt-dir` / `--run-name` | `checkpoints` / `cp_<backbone>` | where the `_best.ckpt` / `_last.ckpt` / `_history.json` files go |
+| `--resume` / `--resume-from` | off / – | continue from `_last.ckpt` (model+optimizer+scheduler+epoch restored); `--epochs` is the *total* target |
+| `--ckpt` | – | explicit path for the best checkpoint (overrides the dir/run-name layout) |
+| `--ckpt-every` | 1 | write the resumable `_last.ckpt` every N epochs (0 = only at the end) |
 | `--out` | – | write aggregate + per-part metrics (with timing) to JSON |
-| `--eval-every` / `--patience` | 10 / 0 | val eval cadence; early-stop after N stale evals (0 = off) |
+| `--eval-every` / `--patience` | 10 / 0 | val metrics (accuracy/precision/recall/F1/loc/ang) cadence; early-stop after N stale evals (0 = off) |
 | `--min-votes` | 2 | min voting vertices per decoded CP (>1 raises precision) |
 | `--heat-loss` / `--focal-gamma` | bce / 2.0 | heatmap loss: weighted BCE or quality-focal |
 | `--lr-decay-every` / `--lr-decay-rate` | 0 / 0.5 | StepLR schedule (0 = off) |
@@ -448,7 +493,7 @@ python train_cp.py /path/to/abb_corpus --backbone knngraph --device cpu \
 ```bash
 # generate a few valid synthetic parts, then smoke-test any backbone on them
 python make_samples.py ./abb_samples 6
-python train_cp.py ./abb_samples --backbone knngraph --epochs 40 --ckpt sm.pt
+python train_cp.py ./abb_samples --backbone knngraph --epochs 40 --run-name smoke
 
 # run every module's selftest
 python run_selftests.py
@@ -494,7 +539,9 @@ caught and retried on CPU, so the full corpus trains without crashing.
 
 **Artifacts live on the Windows drive.** Always write models/caches/results under
 `/mnt/c/...` (= your `C:\...`), **not** `/tmp` (WSL wipes it when the distro
-restarts). The `.pt` checkpoint is portable PyTorch and loads on any machine.
+restarts). Running from the repo dir does this automatically (`checkpoints/`,
+`op_cache/` are repo-relative). The `.ckpt` checkpoint is portable PyTorch and
+loads — and **resumes** — on any machine.
 
 **Native Windows (no WSL)** — use the `knngraph` backbone, which needs only
 torch + scipy + numpy (all have clean Windows wheels):
@@ -502,7 +549,7 @@ torch + scipy + numpy (all have clean Windows wheels):
 ```bat
 .venv\Scripts\python -m pip install torch --index-url https://download.pytorch.org/whl/cpu ^
     --trusted-host download.pytorch.org --trusted-host download-r2.pytorch.org
-.venv\Scripts\python train_cp.py C:\path\to\abb_corpus --backbone knngraph --device cpu --ckpt model.pt
+.venv\Scripts\python train_cp.py C:\path\to\abb_corpus --backbone knngraph --device cpu
 ```
 
 ### Coverage & honesty

@@ -15,15 +15,19 @@ import sys
 import train_cp
 
 # (flag, value) defaults; a flag already present in argv is NOT overridden.
+# value=None means a bare boolean flag. Checkpoints/cache/results are
+# repo-relative so the same command works on every machine the repo is cloned
+# to; --resume makes re-running this script CONTINUE the run from the last
+# committed checkpoint instead of starting over.
 DEFAULT_CORPUS = "/mnt/c/Users/DE00024082/Desktop/JSON"
 DEFAULTS = [
     ("--backbone", "diffusionnet"),
     ("--device", "cuda"),
     ("--epochs", "200"),
-    ("--op-cache-dir", "/mnt/c/Users/DE00024082/Desktop/op_cache"),
-    ("--ckpt", "/mnt/c/Users/DE00024082/Desktop/cp_model.pt"),
+    ("--op-cache-dir", "op_cache"),
     ("--ckpt-every", "10"),
-    ("--out", "/mnt/c/Users/DE00024082/Desktop/results_full.json"),
+    ("--resume", None),
+    ("--out", "results_full.json"),
 ]
 
 
@@ -35,7 +39,7 @@ def main(argv=None):
         argv = [DEFAULT_CORPUS] + argv
     for flag, value in DEFAULTS:
         if flag not in argv:
-            argv += [flag, value]
+            argv += [flag] if value is None else [flag, value]
     train_cp.main(argv)
 
 

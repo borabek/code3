@@ -16,6 +16,7 @@ import json
 import logging
 import dataclasses
 from dataclasses import dataclass
+from typing import Any
 from connector_constants import MIN_FEATURE_AREA_MM2, ROBOT_TOOL_CLEARANCE_MM
 
 logger = logging.getLogger(__name__)
@@ -136,8 +137,9 @@ class ConnectionPointDetectorConfig:
         exercise the full valid-point path; real mm-scale parts should use the
         normal defaults. Extra keyword overrides are passed through.
         """
-        demo = dict(min_feature_area_mm2=0.0, robot_tool_clearance_mm=0.0,
-                    min_insertion_depth_mm=0.0, required_confidence_score=0.0)
+        demo: dict[str, Any] = dict(
+            min_feature_area_mm2=0.0, robot_tool_clearance_mm=0.0,
+            min_insertion_depth_mm=0.0, required_confidence_score=0.0)
         demo.update(overrides)
         return cls(**demo)
 

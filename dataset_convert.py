@@ -48,7 +48,7 @@ def _pick_step_backend():
     return None
 
 def _step_gmsh(step_path, stl_path, linear_deflection):
-    import gmsh
+    import gmsh  # type: ignore[import]
     gmsh.initialize()
     try:
         gmsh.option.setNumber("General.Terminal", 0)
@@ -61,15 +61,15 @@ def _step_gmsh(step_path, stl_path, linear_deflection):
 
 def _step_occ(step_path, stl_path, linear_deflection, angular_deflection):
     try:
-        from OCC.Core.STEPControl import STEPControl_Reader
-        from OCC.Core.StlAPI import StlAPI_Writer
-        from OCC.Core.BRepMesh import BRepMesh_IncrementalMesh
-        from OCC.Core.IFSelect import IFSelect_RetDone
+        from OCC.Core.STEPControl import STEPControl_Reader  # type: ignore[import]
+        from OCC.Core.StlAPI import StlAPI_Writer  # type: ignore[import]
+        from OCC.Core.BRepMesh import BRepMesh_IncrementalMesh  # type: ignore[import]
+        from OCC.Core.IFSelect import IFSelect_RetDone  # type: ignore[import]
     except ImportError:
-        from OCP.STEPControl import STEPControl_Reader
-        from OCP.StlAPI import StlAPI_Writer
-        from OCP.BRepMesh import BRepMesh_IncrementalMesh
-        from OCP.IFSelect import IFSelect_RetDone
+        from OCP.STEPControl import STEPControl_Reader  # type: ignore[import]
+        from OCP.StlAPI import StlAPI_Writer  # type: ignore[import]
+        from OCP.BRepMesh import BRepMesh_IncrementalMesh  # type: ignore[import]
+        from OCP.IFSelect import IFSelect_RetDone  # type: ignore[import]
     reader = STEPControl_Reader()
     if reader.ReadFile(step_path) != IFSelect_RetDone:
         raise RuntimeError(f"STEP read failed: {step_path}")

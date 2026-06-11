@@ -59,7 +59,8 @@ def _crops_to_instances(crops, V, F, vn, subdiv=0, body_center=None, cfg=None):
         idx = np.asarray(c.vertex_index, dtype=int)
         if len(idx) == 0:
             continue
-        n = vn[idx].mean(0); nl = np.linalg.norm(n); n = n/nl if nl > 0 else [0,0,1]
+        n = vn[idx].mean(0); nl = np.linalg.norm(n)
+        n = n / nl if nl > 0 else np.array([0.0, 0.0, 1.0])
         a = float(face_areas(c.vertices, c.faces).sum()) if len(c.faces) else 0.0
         inst = ConnectionPoint([DetectionPatch(idx, V[idx], SNAP_POINT, n, a)])
         inst.compute_direction(V, F, smooth_subdiv=subdiv, body_center=body_center)

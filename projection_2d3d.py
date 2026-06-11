@@ -294,7 +294,8 @@ def crop_mesh_to_box(vertices, faces, aabb3d, face_mode="all", eps_frac=1e-4,
     hi3 = np.asarray(hi3, dtype=float)
 
     eps = eps_frac * float(np.linalg.norm(hi3 - lo3))
-    inside = np.all((V >= lo3 - eps) & (V <= hi3 + eps), axis=1)
+    inside = np.asarray(
+        np.all((V >= lo3 - eps) & (V <= hi3 + eps), axis=1), dtype=bool)
 
     # optionally keep only the front depth layer (to avoid back-face bleed)
     if front_band_frac is not None and depth_axis is not None and inside.any():

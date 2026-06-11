@@ -1,0 +1,3 @@
+# Training checkpoints (.ckpt) are saved here by train_cp.py and committed to
+# git so any machine that clones/pulls the repo can resume training:
+#   python train_cp.py <corpus> --backbone <b> --resume

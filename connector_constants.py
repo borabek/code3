@@ -96,7 +96,7 @@ NUM_CLASSES = 5
 # in the robot-ready graph. Real geometry classification would refine this; the
 # default reflects the most common spring/push-in terminals on rail components.
 DEFAULT_TERMINAL_TYPE = "push_in_terminal"
-TERMINAL_TYPES = {
+TERMINAL_TYPES: Dict[int, str] = {
     CONTACT: DEFAULT_TERMINAL_TYPE,
     CABLE_ENTRY: "cable_gland",
 }

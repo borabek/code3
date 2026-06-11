@@ -100,7 +100,7 @@ def _cotangent_weights(V, F):
             u = V[a] - V[c]
             v = V[b] - V[c]
             cross = np.linalg.norm(np.cross(u, v))
-            cot = float(np.dot(u, v)) / cross if cross > 1e-12 else 0.0
+            cot = float(np.dot(u, v) / cross) if cross > 1e-12 else 0.0
             w[(a, b)] += 0.5 * cot
             w[(b, a)] += 0.5 * cot
     return w

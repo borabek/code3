@@ -189,6 +189,10 @@ def keypoint_report(preds, gt_points, gt_directions, dist_thresh_mm=5.0):
     recall = tp / (tp + fn) if (tp + fn) else 0.0
     f1 = (2 * precision * recall / (precision + recall)
           if (precision + recall) else 0.0)
+    # detection accuracy (critical success index): TP / (TP+FP+FN). There are
+    # no true negatives in keypoint detection, so this is the natural accuracy.
+    # Vacuously perfect when there is nothing to detect and nothing predicted.
+    accuracy = tp / (tp + fp + fn) if (tp + fp + fn) else 1.0
 
     loc_errs = [d for _, _, d in matches]
     ang_errs = [_angle_deg(preds[pi]["direction"], gt_directions[gj])
@@ -201,6 +205,7 @@ def keypoint_report(preds, gt_points, gt_directions, dist_thresh_mm=5.0):
         "n_pred": len(preds), "n_gt": len(gt_points),
         "tp": tp, "fp": fp, "fn": fn,
         "precision": precision, "recall": recall, "f1": f1,
+        "accuracy": accuracy,
         "mean_loc_err_mm": _stat(loc_errs, np.mean),
         "max_loc_err_mm": _stat(loc_errs, np.max),
         "mean_ang_err_deg": _stat(ang_errs, np.mean),
@@ -213,8 +218,8 @@ def print_keypoint_report(rep):
     print("Connection-point metrics (thresh=%.1f mm)" % rep["dist_thresh_mm"])
     print("  pred=%d gt=%d  TP=%d FP=%d FN=%d"
           % (rep["n_pred"], rep["n_gt"], rep["tp"], rep["fp"], rep["fn"]))
-    print("  precision=%.3f recall=%.3f F1=%.3f"
-          % (rep["precision"], rep["recall"], rep["f1"]))
+    print("  accuracy=%.3f precision=%.3f recall=%.3f F1=%.3f"
+          % (rep["accuracy"], rep["precision"], rep["recall"], rep["f1"]))
     print("  loc err (mm): mean=%.3f max=%.3f"
           % (rep["mean_loc_err_mm"], rep["max_loc_err_mm"]))
     print("  dir err (deg): mean=%.3f max=%.3f"
@@ -233,6 +238,7 @@ def _selftest():
     rep = keypoint_report(preds, gt_pts, gt_dir, dist_thresh_mm=2.0)
     assert rep["tp"] == 3 and rep["fp"] == 1 and rep["fn"] == 0, rep
     assert rep["recall"] == 1.0 and abs(rep["precision"] - 0.75) < 1e-9, rep
+    assert abs(rep["accuracy"] - 0.75) < 1e-9, rep
     assert rep["max_loc_err_mm"] < 0.3, rep
     print_keypoint_report(rep)
     print("metrics selftest OK")

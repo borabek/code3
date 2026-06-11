@@ -3,6 +3,7 @@
 import shutil
 import logging
 import subprocess
+from typing import overload, Tuple
 
 import numpy as np
 
@@ -23,6 +24,10 @@ def _edge_midpoints(faces, n_vertices):
 
 # simple subdivision: each triangle split into 4
 
+@overload
+def subdivide_simple(vertices, faces, labels: None = ...) -> Tuple[np.ndarray, np.ndarray]: ...
+@overload
+def subdivide_simple(vertices, faces, labels: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]: ...
 def subdivide_simple(vertices, faces, labels=None):
     """Split each triangle into 4 (edge midpoints)."""
     V = np.asarray(vertices, dtype=float)
@@ -52,6 +57,10 @@ def subdivide_simple(vertices, faces, labels=None):
 
 # smooth (Loop) subdivision
 
+@overload
+def subdivide_loop(vertices, faces, labels: None = ...) -> Tuple[np.ndarray, np.ndarray]: ...
+@overload
+def subdivide_loop(vertices, faces, labels: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]: ...
 def subdivide_loop(vertices, faces, labels=None):
     """Loop subdivision with smoothing. Labels propagated like subdivide_simple."""
     V = np.asarray(vertices, dtype=float)
@@ -123,6 +132,10 @@ def subdivide_loop(vertices, faces, labels=None):
 
 # downsampling via vertex clustering (voxel grid)
 
+@overload
+def decimate_vertex_cluster(vertices, faces, target_vertices, labels: None = ...) -> Tuple[np.ndarray, np.ndarray]: ...
+@overload
+def decimate_vertex_cluster(vertices, faces, target_vertices, labels: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]: ...
 def decimate_vertex_cluster(vertices, faces, target_vertices, labels=None):
     """Decimate to ~target_vertices via voxel clustering + majority vote labels."""
     V = np.asarray(vertices, dtype=float)
@@ -187,7 +200,7 @@ def upscale_labels_nn(vertices_new, vertices_old, labels_old):
     Vo = np.asarray(vertices_old, dtype=float)
     Lo = np.asarray(labels_old, dtype=int)
     try:
-        from scipy.spatial import cKDTree
+        from scipy.spatial import cKDTree  # type: ignore[attr-defined]
         _, idx = cKDTree(Vo).query(Vn)
         return Lo[idx]
     except ImportError:
@@ -198,6 +211,12 @@ def upscale_labels_nn(vertices_new, vertices_old, labels_old):
 
 # scale mesh to a uniform vertex count
 
+@overload
+def scale_to_target(vertices, faces, labels: None = ..., target_vertices=...,
+                    smooth=..., max_subdiv=...) -> Tuple[np.ndarray, np.ndarray]: ...
+@overload
+def scale_to_target(vertices, faces, labels: np.ndarray, target_vertices=...,
+                    smooth=..., max_subdiv=...) -> Tuple[np.ndarray, np.ndarray, np.ndarray]: ...
 def scale_to_target(vertices, faces, labels=None, target_vertices=6000,
                     smooth=False, max_subdiv=4):
     """Bring mesh to approximately target_vertices.
@@ -218,7 +237,10 @@ def scale_to_target(vertices, faces, labels=None, target_vertices=6000,
             V, F, L = subdiv(V, F, L)
         it += 1
 
-    out = decimate_vertex_cluster(V, F, target_vertices, labels=L)
+    if L is None:
+        out = decimate_vertex_cluster(V, F, target_vertices)
+    else:
+        out = decimate_vertex_cluster(V, F, target_vertices, labels=L)
     logger.debug("scale_to_target: -> %d vertices (%d subdivision iterations)", len(out[0]), it)
     return out
 

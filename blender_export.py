@@ -38,16 +38,24 @@ import sys
 import os
 import argparse
 import logging
+from typing import Any
 
 # bpy is only available inside Blender's Python. The module stays importable
 # without bpy (e.g. for tests/docs) -- only main() will abort with a clear
-# message when run outside Blender.
+# message when run outside Blender. Typed as Any so static analysis outside
+# Blender (where bpy can't be resolved) doesn't flag every bpy.data/ops/context.
+bpy: Any
 try:
     import bpy  # type: ignore
     _HAVE_BPY = True
 except ImportError:
     bpy = None
     _HAVE_BPY = False
+
+# Alias for the Blender Object type in annotations. bpy has no stubs outside
+# Blender, so a `bpy.types.Object` annotation isn't a valid type form to the
+# static checker; alias it to Any so the function signatures stay readable.
+BlenderObject = Any
 
 # Make connector3d modules findable.
 # Priority: 1) CONNECTOR3D_PATH env var  2) same directory as this script
@@ -185,7 +193,7 @@ def _run_extract(args) -> None:
                 args.extract_labels, len(labels), counts)
 
 # ---- import mesh into Blender ----
-def _import_mesh_to_blender(mesh_path: str) -> bpy.types.Object:
+def _import_mesh_to_blender(mesh_path: str) -> BlenderObject:
     """Import a mesh into the Blender scene and return the object.
 
     Supported formats: .off (via temp .obj), .obj, .fbx, .stl, .ply.
@@ -231,7 +239,7 @@ def _write_obj_simple(path: str, V, F) -> None:
             fh.write(f"f {f[0]+1} {f[1]+1} {f[2]+1}\n")
 
 # ---- write labels as vertex colors into the Blender mesh ----
-def _apply_labels_as_vertex_colors(obj: bpy.types.Object, labels) -> None:
+def _apply_labels_as_vertex_colors(obj: BlenderObject, labels) -> None:
     """Write labels as a vertex color layer so the segmentation is visible in Blender.
 
     Each class gets a distinct color; this can be used later in the Material Editor.

@@ -95,6 +95,7 @@ def test_alignment():
 
     instances, _ = run(Vt, F, L, min_vertices=10)
     inst = instances[0]
+    assert inst.v_o is not None and inst.v_s is not None
 
     rough = inst.v_o - inst.v_s
     rough = rough / np.linalg.norm(rough)
@@ -119,6 +120,7 @@ def test_normal():
 
     print(f"[instances] {len(instances)}")
     for inst in instances:
+        assert inst.v_o is not None and inst.v_s is not None
         print(f"   - {LABEL_NAMES[inst.label]}")
         print(f"       center   : {np.round(inst.center, 3)}")
         print(f"       v_o      : {np.round(inst.v_o, 3)}")

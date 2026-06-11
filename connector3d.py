@@ -11,7 +11,7 @@
 #   §2.6.1/2.6.2       – triangle mesh as 2-manifold
 
 import logging
-from typing import List
+from typing import List, Optional
 from dataclasses import dataclass, field
 import numpy as np
 from feature_geometry import (
@@ -72,7 +72,7 @@ class SegmentedRegion:
     """A connected, single-class region of the mesh (one instance of a feature class)."""
     label: int
     vertex_index: np.ndarray
-    center: np.ndarray = field(default=None)
+    center: Optional[np.ndarray] = field(default=None)
 
 
 Instance = SegmentedRegion  # backward-compatible alias

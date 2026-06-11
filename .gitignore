@@ -29,6 +29,13 @@ dist/
 *.tmp
 file.tmp
 
+# DiffusionNet eigenbasis cache (large .npz files, regenerated per machine)
+op_cache/
+
+# NOTE: checkpoints/ is deliberately TRACKED in git. The .ckpt files carry the
+# full training state (weights + optimizer + epoch), so committing and pushing
+# them lets any other machine `git pull` and continue training with --resume.
+
 # OS cruft
 .DS_Store
 Thumbs.db
