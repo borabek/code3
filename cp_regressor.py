@@ -113,6 +113,14 @@ def build_diffusionnet_regressor(config=None):
 
 CKPT_VERSION = 1
 
+# Decode operating point bundled with an inference artifact. For keypoint
+# detection these three knobs are part of "the model": the same weights yield a
+# very different precision/recall depending on them, so an export carries them
+# explicitly. dist_thresh_mm is the match radius used when scoring, kept for
+# provenance. Older checkpoints without a "decode" key fall back to these.
+DEFAULT_DECODE = {"heatmap_thresh": 0.3, "min_votes": 2,
+                  "nms_clearance_mm": 5.0, "dist_thresh_mm": 5.0}
+
 
 def _meta_to_config(backbone, meta):
     """Map a checkpoint's meta back to the builder config for that backbone."""
@@ -173,14 +181,16 @@ def _restore_rng(st):
 
 
 def save_checkpoint(path, model, meta, backbone, optimizer=None, scheduler=None,
-                    epoch=None, best_f1=None, history=None):
+                    epoch=None, best_f1=None, history=None, decode=None):
     """Write a (resumable) checkpoint atomically.
 
     With only model+meta this is an inference checkpoint (what the legacy
     save_diffusionnet/save_knngraph wrote); passing optimizer/scheduler/epoch
     makes it a full training checkpoint that train loops can resume from.
-    `epoch` is the last COMPLETED epoch (0-based). Atomic write (tmp+replace)
-    so a crash mid-save never corrupts an existing checkpoint.
+    `epoch` is the last COMPLETED epoch (0-based). `decode` (a dict of the
+    operating-point knobs) is stored when given so the artifact is unambiguous.
+    Atomic write (tmp+replace) so a crash mid-save never corrupts an existing
+    checkpoint.
     """
     torch = _require_torch()
     import os
@@ -189,6 +199,8 @@ def save_checkpoint(path, model, meta, backbone, optimizer=None, scheduler=None,
         os.makedirs(d, exist_ok=True)
     ckpt = {"ckpt_version": CKPT_VERSION, "backbone": backbone,
             "state_dict": model.state_dict(), "meta": meta}
+    if decode is not None:
+        ckpt["decode"] = dict(decode)
     if optimizer is not None:
         ckpt["optimizer"] = optimizer.state_dict()
     if scheduler is not None:
@@ -216,6 +228,17 @@ def load_checkpoint(path, device="cpu"):
     return ckpt
 
 
+def _model_from_ckpt(ckpt, device="cpu"):
+    """Rebuild the exact architecture from a loaded checkpoint dict and load its
+    weights. Returns (model on `device`, in eval mode; meta; backbone)."""
+    backbone = ckpt.get("backbone") or ckpt["meta"].get("backbone", "diffusionnet")
+    model, _ = build_regressor(backbone, _meta_to_config(backbone, ckpt["meta"]))
+    model.load_state_dict(ckpt["state_dict"])
+    model = model.to(device)
+    model.eval()
+    return model, ckpt["meta"], backbone
+
+
 def load_model(path, device="cpu"):
     """Rebuild a trained regressor from any checkpoint for inference.
 
@@ -224,13 +247,53 @@ def load_model(path, device="cpu"):
     `device` and in eval mode.
     """
     ckpt = load_checkpoint(path, device=device)
-    backbone = ckpt.get("backbone") or ckpt["meta"].get("backbone", "diffusionnet")
-    model, _ = build_regressor(backbone, _meta_to_config(backbone, ckpt["meta"]))
-    model.load_state_dict(ckpt["state_dict"])
-    model = model.to(device)
-    model.eval()
+    model, meta, backbone = _model_from_ckpt(ckpt, device=device)
     logger.info("loaded %s checkpoint <- %s", backbone, path)
-    return model, ckpt["meta"], backbone
+    return model, meta, backbone
+
+
+def load_inference(path, device="cpu"):
+    """Like load_model, but also returns the decode operating point bundled with
+    the artifact. Returns (model, meta, backbone, decode) where decode is a dict
+    with heatmap_thresh / min_votes / nms_clearance_mm / dist_thresh_mm --
+    DEFAULT_DECODE for older checkpoints that predate the bundled params.
+    """
+    ckpt = load_checkpoint(path, device=device)
+    model, meta, backbone = _model_from_ckpt(ckpt, device=device)
+    decode = {**DEFAULT_DECODE, **(ckpt.get("decode") or {})}
+    logger.info("loaded %s checkpoint <- %s (decode=%s)", backbone, path, decode)
+    return model, meta, backbone, decode
+
+
+def export_inference_checkpoint(src_path, dst_path, decode=None, device="cpu"):
+    """Write a lean inference-only artifact from a (possibly fat training)
+    checkpoint.
+
+    Keeps weights + meta + backbone (+ decode operating point); drops the
+    optimizer/scheduler/epoch/RNG/history a resumable checkpoint carries. This
+    roughly halves the file and makes it an unambiguous deployment model. If
+    `decode` is None the source checkpoint's own decode (if any) is preserved.
+    Atomic write. Returns dst_path.
+    """
+    torch = _require_torch()
+    import os
+    ckpt = load_checkpoint(src_path, device=device)
+    backbone = ckpt.get("backbone") or ckpt["meta"].get("backbone", "diffusionnet")
+    lean = {"ckpt_version": CKPT_VERSION, "backbone": backbone,
+            "state_dict": ckpt["state_dict"], "meta": ckpt["meta"]}
+    if decode is not None:
+        lean["decode"] = dict(decode)
+    elif ckpt.get("decode"):
+        lean["decode"] = dict(ckpt["decode"])
+    d = os.path.dirname(os.path.abspath(dst_path))
+    if d:
+        os.makedirs(d, exist_ok=True)
+    tmp = dst_path + ".tmp"
+    torch.save(lean, tmp)
+    os.replace(tmp, dst_path)
+    logger.info("exported lean %s inference model -> %s%s", backbone, dst_path,
+                f" (decode={lean['decode']})" if "decode" in lean else "")
+    return dst_path
 
 
 # Backward-compatible wrappers (the readme and older scripts reference these).
@@ -416,12 +479,34 @@ def cp_loss(pred, target, mask, w_heat=1.0, w_off=1.0, w_dir=1.0,
                 "focal" -> quality-focal loss |h - sigmoid(logit)|^gamma * BCE,
                            which down-weights the easy ~0 background and tends to
                            improve precision on the sparse-keypoint heatmap.
+                "centernet" -> penalty-reduced focal loss (CornerNet/CenterNet,
+                           Law&Deng 2018 / Zhou 2019) NORMALISED BY #KEYPOINTS, not
+                           by #vertices. The heat target is ~99% background, so a
+                           per-vertex mean() (bce/focal) dilutes the handful of
+                           positive vertices into the noise -- the model then either
+                           collapses to ~0 (focal/low pos_weight) or over-fires
+                           broadly (high pos_weight). Dividing the loss by the number
+                           of positive (peak) vertices removes that dilution, which
+                           is what lets the heatmap learn sharp, selective peaks.
     """
     torch = _require_torch()
     import torch.nn.functional as Fnn
     heat_logit = pred[:, ct.HEATMAP]
     heat_tgt = target[:, ct.HEATMAP]
-    if heat_loss == "focal":
+    if heat_loss == "centernet":
+        # alpha focuses on hard examples; beta reduces the penalty on the Gaussian
+        # skirt around each peak (near-positive vertices are not punished as hard
+        # negatives). Positives are the peak vertices (target near 1).
+        alpha, beta = 2.0, 4.0
+        p = torch.sigmoid(heat_logit).clamp(1e-6, 1.0 - 1e-6)
+        pos = (heat_tgt >= 1.0 - 1e-4).float()   # exact peaks (encode_targets snaps them)
+        neg = 1.0 - pos
+        neg_w = (1.0 - heat_tgt).pow(beta)
+        pos_loss = ((1.0 - p).pow(alpha) * torch.log(p)) * pos
+        neg_loss = (p.pow(alpha) * torch.log(1.0 - p)) * neg_w * neg
+        n_pos = pos.sum().clamp(min=1.0)
+        loss_heat = -(pos_loss.sum() + neg_loss.sum()) / n_pos
+    elif heat_loss == "focal":
         bce = Fnn.binary_cross_entropy_with_logits(heat_logit, heat_tgt,
                                                    reduction="none")
         mod = (heat_tgt - torch.sigmoid(heat_logit)).abs().pow(focal_gamma)

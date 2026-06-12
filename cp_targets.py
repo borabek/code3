@@ -79,6 +79,14 @@ def encode_targets(vertices, cp_points, cp_directions, sigma_mm=None,
     target[:, OFFSET] = (cp_points[nearest] - vertices).astype(np.float32)
     target[:, DIRECTION] = cp_directions[nearest].astype(np.float32)
 
+    # Guarantee one EXACT peak (heat=1) per CP -- the nearest vertex to it. On a
+    # coarse mesh the Gaussian skirt may never reach ~1 at any vertex, so this
+    # snaps the true peak. Penalty-reduced focal losses (cp_regressor heat_loss
+    # 'centernet') key their positives off heat==1 and collapse without it.
+    for j in range(len(cp_points)):
+        i = int(np.argmin(np.linalg.norm(vertices - cp_points[j], axis=1)))
+        target[i, HEATMAP] = 1.0
+
     mask = dist <= offset_radius_mm
     return target, mask, sigma_mm
 

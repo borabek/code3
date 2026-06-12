@@ -125,18 +125,26 @@ def aggregate(reports):
     return agg
 
 
-def _val_metrics_fn(val_s, val_m, infer_builder, dist_thresh_mm, min_votes):
+def _val_metrics_fn(val_s, val_m, infer_builder, dist_thresh_mm, min_votes,
+                    heatmap_thresh=0.3, nms_clearance_mm=5.0):
     """Build metrics_fn(model, meta) for the training bookkeeper: decode and
     score the validation parts, returning the aggregate keypoint metrics
     (accuracy / precision / recall / f1 / loc / ang). None when no val set --
-    the loop then skips val evaluation and best-by-F1 tracking."""
+    the loop then skips val evaluation and best-by-F1 tracking.
+
+    heatmap_thresh / nms_clearance_mm are the decode knobs that govern the
+    precision/recall trade-off; they must match the values used for the final
+    train/val evaluate() so the best-by-F1 checkpoint is selected under the same
+    decoding the report uses."""
     if not val_s:
         return None
 
     def metrics_fn(m, mt):
         return aggregate(evaluate(val_s, val_m, infer_builder(m, mt),
                                   dist_thresh_mm=dist_thresh_mm,
-                                  min_votes=min_votes))
+                                  heatmap_thresh=heatmap_thresh,
+                                  min_votes=min_votes,
+                                  nms_clearance_mm=nms_clearance_mm))
     return metrics_fn
 
 
@@ -151,7 +159,8 @@ def train_and_eval(source, backbone="mlp", epochs=300, val_frac=0.2,
                    save_every=1, resume_from=None,
                    min_votes=2, heat_loss="bce",
                    focal_gamma=2.0, lr_decay_every=0, lr_decay_rate=0.5,
-                   accum_steps=1, low_memory=False, eval_every=10, patience=0):
+                   accum_steps=1, low_memory=False, eval_every=10, patience=0,
+                   heatmap_thresh=0.3, nms_clearance_mm=5.0, heat_pos_weight=50.0):
     """Load parts, prepare targets, train, and evaluate. Returns (train_agg, val_agg).
 
     best_path / last_path : full-state .ckpt files (best-by-val-F1, rolling
@@ -200,7 +209,9 @@ def train_and_eval(source, backbone="mlp", epochs=300, val_frac=0.2,
             return f
 
         metrics_fn = _val_metrics_fn(val_s, val_m, _infer_builder,
-                                     dist_thresh_mm, min_votes)
+                                     dist_thresh_mm, min_votes,
+                                     heatmap_thresh=heatmap_thresh,
+                                     nms_clearance_mm=nms_clearance_mm)
         model = cpr.train_cpmlp(
             train_s, epochs=epochs, device=device,
             log_every=max(1, epochs // 6),
@@ -218,13 +229,16 @@ def train_and_eval(source, backbone="mlp", epochs=300, val_frac=0.2,
             return f
 
         metrics_fn = _val_metrics_fn(val_s, val_m, _infer_builder,
-                                     dist_thresh_mm, min_votes)
+                                     dist_thresh_mm, min_votes,
+                                     heatmap_thresh=heatmap_thresh,
+                                     nms_clearance_mm=nms_clearance_mm)
         model, meta = cpr.train_knngraph_regressor(
             train_s, epochs=epochs, device=device,
             log_every=max(1, epochs // 10), max_gpu_verts=max_gpu_verts,
             metrics_fn=metrics_fn, eval_every=eval_every, patience=patience,
             best_path=best_path, last_path=last_path, save_every=save_every,
             history_path=history_path, resume_from=resume_from, seed=seed,
+            heat_pos_weight=heat_pos_weight,
             heat_loss=heat_loss, focal_gamma=focal_gamma,
             lr_decay_every=lr_decay_every, lr_decay_rate=lr_decay_rate,
             accum_steps=accum_steps)
@@ -239,22 +253,29 @@ def train_and_eval(source, backbone="mlp", epochs=300, val_frac=0.2,
             return f
 
         metrics_fn = _val_metrics_fn(val_s, val_m, _infer_builder,
-                                     dist_thresh_mm, min_votes)
+                                     dist_thresh_mm, min_votes,
+                                     heatmap_thresh=heatmap_thresh,
+                                     nms_clearance_mm=nms_clearance_mm)
         model, meta = cpr.train_diffusionnet_regressor(
             train_s, epochs=epochs, device=device, op_cache_dir=op_cache_dir,
             log_every=max(1, epochs // 10), max_gpu_verts=max_gpu_verts,
             metrics_fn=metrics_fn, eval_every=eval_every, patience=patience,
             best_path=best_path, last_path=last_path, save_every=save_every,
             history_path=history_path, resume_from=resume_from, seed=seed,
+            heat_pos_weight=heat_pos_weight,
             heat_loss=heat_loss, focal_gamma=focal_gamma,
             lr_decay_every=lr_decay_every, lr_decay_rate=lr_decay_rate,
             accum_steps=accum_steps, low_memory=low_memory)
         infer_arr = _infer_builder(model, meta)
 
     train_reports = evaluate(train_s, train_m, infer_arr,
-                             dist_thresh_mm=dist_thresh_mm, min_votes=min_votes)
+                             dist_thresh_mm=dist_thresh_mm,
+                             heatmap_thresh=heatmap_thresh, min_votes=min_votes,
+                             nms_clearance_mm=nms_clearance_mm)
     val_reports = (evaluate(val_s, val_m, infer_arr,
-                            dist_thresh_mm=dist_thresh_mm, min_votes=min_votes)
+                            dist_thresh_mm=dist_thresh_mm,
+                            heatmap_thresh=heatmap_thresh, min_votes=min_votes,
+                            nms_clearance_mm=nms_clearance_mm)
                    if val_s else [])
     return aggregate(train_reports), aggregate(val_reports), train_reports, val_reports
 
@@ -269,7 +290,8 @@ def _print_agg(title, agg):
           % (agg["n_parts"], agg["total_gt"], agg["total_tp"],
              agg["total_fp"], agg["total_fn"]))
     for k in ("accuracy", "precision", "recall", "f1"):
-        print("  %-9s : %.4f   (pooled %.4f)" % (k, agg[k], agg["micro_" + k]))
+        print("  %-9s : %.2f%%   (pooled %.2f%%)"
+              % (k, agg[k] * 100, agg["micro_" + k] * 100))
     print("  loc error : %.3f mm    ang error : %.2f deg"
           % (agg["mean_loc_err_mm"], agg["mean_ang_err_deg"]))
 
@@ -314,10 +336,32 @@ def main(argv=None):
                          "(default 1; 0 = only at the end)")
     ap.add_argument("--out", default=None,
                     help="write aggregate + per-part metrics (with timing) to this JSON file")
+    ap.add_argument("--export-model", default=None,
+                    help="after training, write a lean inference-only .pt from the "
+                         "best checkpoint (weights+meta+backbone+decode params, no "
+                         "optimizer/history). Load it with predict.py")
     ap.add_argument("--min-votes", type=int, default=2,
                     help="min voting vertices per decoded CP (>1 raises precision)")
-    ap.add_argument("--heat-loss", choices=["bce", "focal"], default="bce",
-                    help="heatmap loss: weighted BCE or quality-focal")
+    ap.add_argument("--heatmap-thresh", type=float, default=0.3,
+                    help="decode: min sigmoid heat for a vertex to vote for a CP. "
+                         "Higher -> fewer false positives, but too high fires "
+                         "nothing. This is just the training-time eval point; pick "
+                         "the deployment operating point with sweep_decode.py")
+    ap.add_argument("--nms-clearance-mm", type=float, default=5.0,
+                    help="decode: votes are merged within max(2*sigma, this) mm; "
+                         "larger collapses scattered votes into fewer detections")
+    ap.add_argument("--heat-pos-weight", type=float, default=50.0,
+                    help="heatmap BCE positive weight (1 + w*h). The heat target is "
+                         "~99%% background, so this must stay high (default 50) or "
+                         "the model collapses to ~0 heat everywhere (recall 0). To "
+                         "raise precision prefer --heat-loss focal over lowering it "
+                         "(knngraph/diffusionnet only)")
+    ap.add_argument("--heat-loss", choices=["bce", "focal", "centernet"],
+                    default="bce",
+                    help="heatmap loss. 'centernet' is the penalty-reduced focal "
+                         "loss normalised by #keypoints -- the right choice for this "
+                         "sparse heatmap; 'bce'/'focal' average over all vertices and "
+                         "either over-fire or collapse on the 99%% background")
     ap.add_argument("--focal-gamma", type=float, default=2.0)
     ap.add_argument("--lr-decay-every", type=int, default=0,
                     help="StepLR step size in epochs (0 disables the schedule)")
@@ -367,7 +411,8 @@ def main(argv=None):
         op_cache_dir=args.op_cache_dir, max_gpu_verts=args.max_gpu_verts,
         best_path=best_path, last_path=last_path, history_path=history_path,
         save_every=args.ckpt_every, resume_from=resume_from,
-        min_votes=args.min_votes,
+        min_votes=args.min_votes, heatmap_thresh=args.heatmap_thresh,
+        nms_clearance_mm=args.nms_clearance_mm, heat_pos_weight=args.heat_pos_weight,
         heat_loss=args.heat_loss, focal_gamma=args.focal_gamma,
         lr_decay_every=args.lr_decay_every, lr_decay_rate=args.lr_decay_rate,
         accum_steps=args.accum_steps, low_memory=args.low_memory,
@@ -395,6 +440,22 @@ def main(argv=None):
                        "train_per_part": tr_reps, "val_per_part": va_reps,
                        "elapsed_sec": elapsed}, fh, indent=2)
         print("\nmetrics written to", args.out)
+
+    if args.export_model:
+        # bundle the decode operating point used for this run so the exported
+        # model is self-contained (the weights alone are ambiguous for keypoints)
+        decode = {"heatmap_thresh": args.heatmap_thresh, "min_votes": args.min_votes,
+                  "nms_clearance_mm": args.nms_clearance_mm,
+                  "dist_thresh_mm": args.dist_thresh_mm}
+        src = best_path if os.path.exists(best_path) else last_path
+        if os.path.exists(src):
+            cpr.export_inference_checkpoint(src, args.export_model, decode=decode)
+            print("\nexported inference model -> %s\n  (from %s, decode=%s)"
+                  % (args.export_model, src, decode))
+            print("  run it:  python predict.py %s <mesh-or-corpus> --out preds.json"
+                  % args.export_model)
+        else:
+            print("\n--export-model: no checkpoint found to export (%s)" % src)
 
 
 if __name__ == "__main__":
