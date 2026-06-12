@@ -1,0 +1,426 @@
+{
+  "backbone": "knngraph",
+  "decode": {
+    "heatmap_thresh": 0.3,
+    "min_votes": 2,
+    "nms_clearance_mm": 10.0,
+    "dist_thresh_mm": 5.0
+  },
+  "n_parts": 1,
+  "n_detected_total": 14,
+  "parts": [
+    {
+      "part_nr": "SYN.000",
+      "n_vertices": 960,
+      "n_detected": 14,
+      "connection_points": [
+        {
+          "id": 0,
+          "robot_class": "TerminalContact",
+          "entry_point": [
+            74.90431,
+            18.12553,
+            -0.37612
+          ],
+          "approach_vector": [
+            0.00048,
+            0.00071,
+            1.0
+          ],
+          "insertion_axis": [
+            -0.00048,
+            -0.00071,
+            -1.0
+          ],
+          "standoff_point": [
+            74.90431,
+            18.12553,
+            -0.37612
+          ],
+          "approach_distance_mm": 0.0,
+          "confidence_score": 0.555,
+          "n_votes": 11,
+          "terminal_names": null,
+          "n_terminals": null
+        },
+        {
+          "id": 1,
+          "robot_class": "TerminalContact",
+          "entry_point": [
+            59.34177,
+            16.26759,
+            0.14937
+          ],
+          "approach_vector": [
+            0.00013,
+            0.00041,
+            1.0
+          ],
+          "insertion_axis": [
+            -0.00013,
+            -0.00041,
+            -1.0
+          ],
+          "standoff_point": [
+            59.34177,
+            16.26759,
+            0.14937
+          ],
+          "approach_distance_mm": 0.0,
+          "confidence_score": 0.5389,
+          "n_votes": 18,
+          "terminal_names": null,
+          "n_terminals": null
+        },
+        {
+          "id": 2,
+          "robot_class": "TerminalContact",
+          "entry_point": [
+            80.69558,
+            60.42003,
+            -0.66795
+          ],
+          "approach_vector": [
+            0.00034,
+            -0.00096,
+            1.0
+          ],
+          "insertion_axis": [
+            -0.00034,
+            0.00096,
+            -1.0
+          ],
+          "standoff_point": [
+            80.69558,
+            60.42003,
+            -0.66795
+          ],
+          "approach_distance_mm": 0.0,
+          "confidence_score": 0.5046,
+          "n_votes": 14,
+          "terminal_names": null,
+          "n_terminals": null
+        },
+        {
+          "id": 3,
+          "robot_class": "TerminalContact",
+          "entry_point": [
+            67.24031,
+            66.33515,
+            0.14012
+          ],
+          "approach_vector": [
+            -0.00036,
+            -0.00094,
+            1.0
+          ],
+          "insertion_axis": [
+            0.00036,
+            0.00094,
+            -1.0
+          ],
+          "standoff_point": [
+            67.24031,
+            66.33515,
+            0.14012
+          ],
+          "approach_distance_mm": 0.0,
+          "confidence_score": 0.5009,
+          "n_votes": 11,
+          "terminal_names": null,
+          "n_terminals": null
+        },
+        {
+          "id": 4,
+          "robot_class": "TerminalContact",
+          "entry_point": [
+            71.11121,
+            31.23,
+            -0.20497
+          ],
+          "approach_vector": [
+            -9e-05,
+            -0.00022,
+            1.0
+          ],
+          "insertion_axis": [
+            9e-05,
+            0.00022,
+            -1.0
+          ],
+          "standoff_point": [
+            71.11121,
+            31.23,
+            -0.20497
+          ],
+          "approach_distance_mm": 0.0,
+          "confidence_score": 0.4389,
+          "n_votes": 14,
+          "terminal_names": null,
+          "n_terminals": null
+        },
+        {
+          "id": 5,
+          "robot_class": "TerminalContact",
+          "entry_point": [
+            47.14913,
+            19.9783,
+            -0.09021
+          ],
+          "approach_vector": [
+            0.00037,
+            -0.00136,
+            1.0
+          ],
+          "insertion_axis": [
+            -0.00037,
+            0.00136,
+            -1.0
+          ],
+          "standoff_point": [
+            47.14913,
+            19.9783,
+            -0.09021
+          ],
+          "approach_distance_mm": 0.0,
+          "confidence_score": 0.3978,
+          "n_votes": 15,
+          "terminal_names": null,
+          "n_terminals": null
+        },
+        {
+          "id": 6,
+          "robot_class": "TerminalContact",
+          "entry_point": [
+            65.0629,
+            39.7724,
+            -0.25098
+          ],
+          "approach_vector": [
+            -0.00022,
+            -0.00153,
+            1.0
+          ],
+          "insertion_axis": [
+            0.00022,
+            0.00153,
+            -1.0
+          ],
+          "standoff_point": [
+            65.0629,
+            39.7724,
+            -0.25098
+          ],
+          "approach_distance_mm": 0.0,
+          "confidence_score": 0.3977,
+          "n_votes": 3,
+          "terminal_names": null,
+          "n_terminals": null
+        },
+        {
+          "id": 7,
+          "robot_class": "TerminalContact",
+          "entry_point": [
+            25.4305,
+            61.93791,
+            0.44025
+          ],
+          "approach_vector": [
+            -6e-05,
+            -0.00152,
+            1.0
+          ],
+          "insertion_axis": [
+            6e-05,
+            0.00152,
+            -1.0
+          ],
+          "standoff_point": [
+            25.4305,
+            61.93791,
+            0.44025
+          ],
+          "approach_distance_mm": 0.0,
+          "confidence_score": 0.3912,
+          "n_votes": 9,
+          "terminal_names": null,
+          "n_terminals": null
+        },
+        {
+          "id": 8,
+          "robot_class": "TerminalContact",
+          "entry_point": [
+            35.388,
+            48.66277,
+            0.1138
+          ],
+          "approach_vector": [
+            -5e-05,
+            -0.00075,
+            1.0
+          ],
+          "insertion_axis": [
+            5e-05,
+            0.00075,
+            -1.0
+          ],
+          "standoff_point": [
+            35.388,
+            48.66277,
+            0.1138
+          ],
+          "approach_distance_mm": 0.0,
+          "confidence_score": 0.3825,
+          "n_votes": 14,
+          "terminal_names": null,
+          "n_terminals": null
+        },
+        {
+          "id": 9,
+          "robot_class": "TerminalContact",
+          "entry_point": [
+            70.2422,
+            55.95141,
+            -0.16175
+          ],
+          "approach_vector": [
+            -0.00022,
+            -0.00077,
+            1.0
+          ],
+          "insertion_axis": [
+            0.00022,
+            0.00077,
+            -1.0
+          ],
+          "standoff_point": [
+            70.2422,
+            55.95141,
+            -0.16175
+          ],
+          "approach_distance_mm": 0.0,
+          "confidence_score": 0.3813,
+          "n_votes": 9,
+          "terminal_names": null,
+          "n_terminals": null
+        },
+        {
+          "id": 10,
+          "robot_class": "TerminalContact",
+          "entry_point": [
+            20.80803,
+            37.32526,
+            -0.02833
+          ],
+          "approach_vector": [
+            0.00019,
+            -0.00072,
+            1.0
+          ],
+          "insertion_axis": [
+            -0.00019,
+            0.00072,
+            -1.0
+          ],
+          "standoff_point": [
+            20.80803,
+            37.32526,
+            -0.02833
+          ],
+          "approach_distance_mm": 0.0,
+          "confidence_score": 0.3785,
+          "n_votes": 7,
+          "terminal_names": null,
+          "n_terminals": null
+        },
+        {
+          "id": 11,
+          "robot_class": "TerminalContact",
+          "entry_point": [
+            41.4262,
+            59.64537,
+            0.03083
+          ],
+          "approach_vector": [
+            0.00015,
+            -0.00037,
+            1.0
+          ],
+          "insertion_axis": [
+            -0.00015,
+            0.00037,
+            -1.0
+          ],
+          "standoff_point": [
+            41.4262,
+            59.64537,
+            0.03083
+          ],
+          "approach_distance_mm": 0.0,
+          "confidence_score": 0.3653,
+          "n_votes": 7,
+          "terminal_names": null,
+          "n_terminals": null
+        },
+        {
+          "id": 12,
+          "robot_class": "TerminalContact",
+          "entry_point": [
+            21.14041,
+            52.40927,
+            0.23827
+          ],
+          "approach_vector": [
+            1e-05,
+            -0.0018,
+            1.0
+          ],
+          "insertion_axis": [
+            -1e-05,
+            0.0018,
+            -1.0
+          ],
+          "standoff_point": [
+            21.14041,
+            52.40927,
+            0.23827
+          ],
+          "approach_distance_mm": 0.0,
+          "confidence_score": 0.3571,
+          "n_votes": 3,
+          "terminal_names": null,
+          "n_terminals": null
+        },
+        {
+          "id": 13,
+          "robot_class": "TerminalContact",
+          "entry_point": [
+            29.11095,
+            19.01838,
+            -0.65445
+          ],
+          "approach_vector": [
+            0.00055,
+            -0.00216,
+            1.0
+          ],
+          "insertion_axis": [
+            -0.00055,
+            0.00216,
+            -1.0
+          ],
+          "standoff_point": [
+            29.11095,
+            19.01838,
+            -0.65445
+          ],
+          "approach_distance_mm": 0.0,
+          "confidence_score": 0.3112,
+          "n_votes": 2,
+          "terminal_names": null,
+          "n_terminals": null
+        }
+      ]
+    }
+  ]
+}
